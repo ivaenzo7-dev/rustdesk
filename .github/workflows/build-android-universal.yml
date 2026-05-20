@@ -368,6 +368,7 @@ jobs:
     - name: Build Universal APK
       env:
         JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+        KNOX_LICENSE_KEY: ${{ secrets.KNOX_LICENSE_KEY }}
       run: |
         export PATH=/usr/lib/jvm/java-17-openjdk-amd64/bin:$PATH
 

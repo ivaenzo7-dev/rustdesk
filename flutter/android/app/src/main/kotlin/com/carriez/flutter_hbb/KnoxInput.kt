@@ -64,10 +64,28 @@ object KnoxInput {
         }
 
         try {
-            // Resolve RemoteInjectionManager; if absent, this isn't a Knox device.
-            val rimClass = Class.forName("com.samsung.android.knox.remotecontrol.RemoteInjectionManager")
-            val getInstance = rimClass.getMethod("getInstance", Context::class.java)
-            injector = getInstance.invoke(null, ctx)
+            // Class name differs across Knox versions: modern Knox (API 39 on
+            // Android 16 / One UI) ships ...remotecontrol.RemoteInjection; older
+            // Knox used ...RemoteInjectionManager. Verified on SM-S711U: the jar
+            // contains com.samsung.android.knox.remotecontrol.RemoteInjection.
+            var rimClass: Class<*>? = null
+            for (cn in listOf(
+                "com.samsung.android.knox.remotecontrol.RemoteInjection",
+                "com.samsung.android.knox.remotecontrol.RemoteInjectionManager"
+            )) {
+                try { rimClass = Class.forName(cn); break } catch (_: ClassNotFoundException) {}
+            }
+            if (rimClass == null) {
+                Log.w(TAG, "Knox RemoteInjection class not present — gesture fallback")
+                ready = false
+                return
+            }
+            // getInstance is getInstance(Context) on some versions, no-arg on others.
+            injector = try {
+                rimClass.getMethod("getInstance", Context::class.java).invoke(null, ctx)
+            } catch (e: NoSuchMethodException) {
+                rimClass.getMethod("getInstance").invoke(null)
+            }
             injectMethod = resolveInjectMethod(rimClass)
 
             if (injector == null || injectMethod == null) {

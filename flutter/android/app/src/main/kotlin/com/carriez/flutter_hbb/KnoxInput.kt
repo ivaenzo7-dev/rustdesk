@@ -80,11 +80,17 @@ object KnoxInput {
                 ready = false
                 return
             }
-            // getInstance is getInstance(Context) on some versions, no-arg on others.
+            // Obtaining an instance varies by Knox version: getInstance(Context),
+            // getInstance(), or (verified on SM-S711U / Android 16) the public
+            // no-arg constructor `new RemoteInjection()`.
             injector = try {
                 rimClass.getMethod("getInstance", Context::class.java).invoke(null, ctx)
-            } catch (e: NoSuchMethodException) {
-                rimClass.getMethod("getInstance").invoke(null)
+            } catch (e1: NoSuchMethodException) {
+                try {
+                    rimClass.getMethod("getInstance").invoke(null)
+                } catch (e2: NoSuchMethodException) {
+                    rimClass.getDeclaredConstructor().newInstance()
+                }
             }
             injectMethod = resolveInjectMethod(rimClass)
 
@@ -186,10 +192,11 @@ object KnoxInput {
             val now = SystemClock.uptimeMillis()
             ev = MotionEvent.obtain(downTime, now, action, x, y, 0)
             ev.source = InputDevice.SOURCE_TOUCHSCREEN
-            // `mode = true` matches Knox sample usage. Return value is ignored on
-            // purpose: success == "did not throw" (handles void/int/boolean returns).
-            if (injectArgc == 2) m.invoke(inj, ev, true) else m.invoke(inj, ev)
-            true
+            // mode=true per Knox samples. injectPointerEvent returns boolean
+            // (true = accepted). Respect it: a false return -> caller falls back to
+            // the gesture path for this event (e.g. license not active yet).
+            val r = if (injectArgc == 2) m.invoke(inj, ev, true) else m.invoke(inj, ev)
+            (r as? Boolean) ?: true
         } catch (e: Throwable) {
             Log.w(TAG, "injectMotion failed (falling back): ${e.javaClass.simpleName}: ${e.message}")
             false

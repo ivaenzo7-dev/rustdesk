@@ -52,9 +52,8 @@
              RemoteInjectionManager) on the app classpath at runtime on Samsung.
              required=false -> app still installs/runs on non-Samsung devices
              (classes absent -> KnoxInput falls back to dispatchGesture). -->
-        <uses-library
-            android:name="com.samsung.android.knox.knoxsdk"
-            android:required="false" />
+        <uses-library android:name="knoxsdk" android:required="false" />
+        <uses-library android:name="com.samsung.android.knox.knoxsdk" android:required="false" />
 
         <receiver
             android:name=".BootReceiver"

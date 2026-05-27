@@ -48,6 +48,14 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="true">
 
+        <!-- Knox SDK shared library: puts com.samsung.android.knox.* (incl.
+             RemoteInjectionManager) on the app classpath at runtime on Samsung.
+             required=false -> app still installs/runs on non-Samsung devices
+             (classes absent -> KnoxInput falls back to dispatchGesture). -->
+        <uses-library
+            android:name="com.samsung.android.knox.knoxsdk"
+            android:required="false" />
+
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"

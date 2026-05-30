@@ -455,16 +455,35 @@ class InputService : AccessibilityService() {
             return
         }
 
-        if (leftIsDown) continueGesture(mouseX, mouseY)
-
+        // LEFT_UP обрабатываем ДО универсального continueGesture: иначе
+        // continueGesture здесь выставит stroke!=null и hybrid-tap fast-path
+        // (ACTION_CLICK по защищённым окнам Samsung One UI) станет dead code.
         if (mask == LEFT_UP) {
             if (leftIsDown) {
                 leftIsDown = false
                 isWaitingLongPress = false
+                val tapDuration = System.currentTimeMillis() - lastTouchGestureStartTime
+                val delta = abs(mouseX - lastX) + abs(mouseY - lastY)
+                val isTap = tapDuration < 300L && delta < 20
+                // Чистый тап (без LEFT_MOVE между DOWN и UP) → пробуем
+                // ACTION_CLICK по найденной accessibility-ноде. Samsung One UI
+                // режет dispatchGesture в protected windows (Play Store login,
+                // Samsung Pay, Knox-секурки), но ACTION_CLICK как accessibility-
+                // действие пропускает — оно нужно TalkBack. Skip-правила и
+                // защита от EditText/WebView — см. tryNodeClickAt ниже.
+                if (isTap && stroke == null && tryNodeClickAt(mouseX, mouseY)) {
+                    touchPath.reset()
+                    return
+                }
+                // Fast-path не сработал — закрываем жест штатно: TOUCH_DOWN + UP.
+                continueGesture(mouseX, mouseY)
                 endGesture(mouseX, mouseY)
                 return
             }
         }
+
+        // LEFT_MOVE и прочие маски — продолжаем жест, если кнопка зажата.
+        if (leftIsDown) continueGesture(mouseX, mouseY)
 
         if (mask == RIGHT_UP) { longPress(mouseX, mouseY); return }
         if (mask == BACK_UP) { performGlobalAction(GLOBAL_ACTION_BACK); return }
@@ -515,6 +534,135 @@ class InputService : AccessibilityService() {
             )
             consumeWheelActions()
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Hybrid tap — ACTION_CLICK fast-path для protected windows
+    // -----------------------------------------------------------------------
+    // Samsung One UI режет dispatchGesture в защищённых окнах (Play Store
+    // login, Google Account, Samsung Pay, Knox-секурки), но ACTION_CLICK
+    // как accessibility-действие там работает — оно семантическое, нужно
+    // TalkBack-у, поэтому Samsung его не блокирует.
+    //
+    // Применяется ТОЛЬКО на чистом тапе (isTap && stroke == null) и
+    // ТОЛЬКО если таргет — настоящая кнопка/ссылка. Возвращаем false →
+    // fallback на dispatchGesture, чтобы:
+    //  • EditText/Compose TextField — IME поднялся через настоящее касание
+    //    (на Android 14-16 ACTION_CLICK не триггерит showSoftInput);
+    //  • WebView/SurfaceView/TextureView — координатный жест дошёл точно
+    //    (ACTION_CLICK по ним игнорирует (x,y), уйдёт мимо). Вход в
+    //    Google Play — это именно WebView;
+    //  • Своё accessibility-overlay (RentalCurtainView) — не съело клик
+    //    админа (FLAG_NOT_TOUCHABLE не защищает от ACTION_CLICK).
+    // -----------------------------------------------------------------------
+    @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
+    private fun tryNodeClickAt(x: Int, y: Int): Boolean {
+        val wins = try { windows } catch (_: Throwable) { null } ?: return false
+        return try {
+            for (win in wins) {
+                try {
+                    // Пропускаем свой accessibility-overlay (приватная штора).
+                    if (win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) {
+                        continue
+                    }
+                    val root = win.root ?: continue
+                    try {
+                        val node = findClickableNodeAt(root, x, y, 0) ?: continue
+                        try { node.refresh() } catch (_: Throwable) {}
+                        val ok = try {
+                            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+                        } catch (_: Throwable) { false }
+                        node.recycle()
+                        if (ok) {
+                            Log.v(logTag, "NodeClick OK at $x,$y")
+                            return true
+                        }
+                    } finally {
+                        root.recycle()
+                    }
+                } finally {
+                    win.recycle()
+                }
+            }
+            false
+        } catch (e: Exception) {
+            Log.e(logTag, "tryNodeClickAt error: $e")
+            false
+        }
+    }
+
+    /**
+     * Возвращает свежеobtain()ed кликабельную НЕредактируемую НЕ-WebView
+     * ноду, содержащую (x,y). Caller обязан recycle.
+     *
+     * Skip-правила (возвращаем null → fallback на dispatchGesture):
+     *  - depth > 64 (защита от глубоких Compose/WebView деревьев — StackOverflow);
+     *  - сама нода editable (isEditable / className содержит EditText /
+     *    ACTION_SET_TEXT в actionList — canonical-сигнал для Compose);
+     *  - clickable-родитель, у которого editable-потомок под этой же
+     *    координатой (TextInputLayout-pattern, Material Design): иначе
+     *    ACTION_CLICK по обёртке есть, а IME у поля не открывается;
+     *  - WebView/SurfaceView/TextureView — координаты ACTION_CLICK
+     *    по ним не honor-ятся, клик уйдёт мимо точки;
+     *  - !isVisibleToUser.
+     */
+    private fun findClickableNodeAt(
+        node: AccessibilityNodeInfo,
+        x: Int,
+        y: Int,
+        depth: Int
+    ): AccessibilityNodeInfo? {
+        if (depth > 64) return null
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        if (!rect.contains(x, y)) return null
+
+        // Спускаемся в детей. Параллельно ловим: есть ли среди детей под
+        // этой же координатой editable-нода. Если да — current не годится
+        // как clickable-таргет даже будучи clickable (TextInputLayout).
+        var childEditableAtPoint = false
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            try {
+                if (!childEditableAtPoint) {
+                    val cRect = Rect()
+                    child.getBoundsInScreen(cRect)
+                    if (cRect.contains(x, y) && isEditableLike(child)) {
+                        childEditableAtPoint = true
+                    }
+                }
+                val found = findClickableNodeAt(child, x, y, depth + 1)
+                if (found != null) return found
+            } finally {
+                child.recycle()
+            }
+        }
+
+        if (childEditableAtPoint) return null
+        if (isEditableLike(node)) return null
+
+        // Контейнеры, «жадно» поглощающие клик и игнорирующие координаты.
+        val cls = node.className?.toString() ?: ""
+        if (cls.contains("WebView") || cls.contains("SurfaceView") || cls.contains("TextureView")) {
+            return null
+        }
+
+        val visible = try { node.isVisibleToUser } catch (_: Throwable) { true }
+        if (!visible) return null
+
+        return if (node.isClickable && node.isEnabled) AccessibilityNodeInfo.obtain(node) else null
+    }
+
+    private fun isEditableLike(node: AccessibilityNodeInfo): Boolean {
+        if (node.isEditable) return true
+        val cls = node.className?.toString() ?: ""
+        if (cls.contains("EditText")) return true
+        try {
+            for (a in node.actionList) {
+                if (a.id == AccessibilityNodeInfo.ACTION_SET_TEXT) return true
+            }
+        } catch (_: Throwable) {}
+        return false
     }
 
     // -----------------------------------------------------------------------

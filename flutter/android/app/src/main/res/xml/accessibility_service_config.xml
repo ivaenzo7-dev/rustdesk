@@ -14,4 +14,5 @@
     android:canTakeScreenshot="true"
     android:notificationTimeout="50"
     android:description="@string/accessibility_service_description"
+    android:isAccessibilityTool="true"
     tools:targetApi="30" />

@@ -544,16 +544,24 @@ class InputService : AccessibilityService() {
     // как accessibility-действие там работает — оно семантическое, нужно
     // TalkBack-у, поэтому Samsung его не блокирует.
     //
-    // Применяется ТОЛЬКО на чистом тапе (isTap && stroke == null) и
-    // ТОЛЬКО если таргет — настоящая кнопка/ссылка. Возвращаем false →
-    // fallback на dispatchGesture, чтобы:
-    //  • EditText/Compose TextField — IME поднялся через настоящее касание
-    //    (на Android 14-16 ACTION_CLICK не триггерит showSoftInput);
-    //  • WebView/SurfaceView/TextureView — координатный жест дошёл точно
-    //    (ACTION_CLICK по ним игнорирует (x,y), уйдёт мимо). Вход в
-    //    Google Play — это именно WebView;
-    //  • Своё accessibility-overlay (RentalCurtainView) — не съело клик
-    //    админа (FLAG_NOT_TOUCHABLE не защищает от ACTION_CLICK).
+    // Применяется ТОЛЬКО на чистом тапе (isTap && stroke == null). Логика
+    // повторяет проверенный upstream just-for-the-soul/rustdesk (commit
+    // 182a1d25, "fix InputService 003"):
+    //  • Если клик попал в окно мягкой клавиатуры (TYPE_INPUT_METHOD) —
+    //    return false, fallback на dispatchGesture (реальный палец).
+    //    Иначе ACTION_CLICK по ноде клавиши ломает state machine IME.
+    //  • Если клик не попадает в bounds окна — continue к следующему.
+    //  • Свой accessibility-overlay (RentalCurtainView) — continue (иначе
+    //    штора съест клик админа: FLAG_NOT_TOUCHABLE не защищает от
+    //    ACTION_CLICK).
+    //
+    // ИСТОРИЧЕСКИЕ ПРАВКИ (отозваны):
+    //  - editable-skip / clickable-parent guard / WebView-blacklist — ввёл
+    //    как defence-in-depth, но WebView-blacklist ломал Google Play
+    //    sign-in (он сам WebView), а editable-skip упирался в clickable-
+    //    обёртки. Upstream 003 этих guard-ов не имеет и работает корректно
+    //    (включая IME и Play Store login). Откатываемся на минимальную
+    //    логику + наши must-haves (overlay-skip, win.recycle, depth-cap).
     // -----------------------------------------------------------------------
     @RequiresApi(Build.VERSION_CODES.LOLLIPOP)
     private fun tryNodeClickAt(x: Int, y: Int): Boolean {
@@ -561,15 +569,19 @@ class InputService : AccessibilityService() {
         return try {
             for (win in wins) {
                 try {
-                    // Пропускаем свой accessibility-overlay (приватная штора).
+                    // Свой accessibility-overlay (штора) — мимо.
                     if (win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) {
                         continue
                     }
-                    // ФИКС (backport upstream 003): если клик попал в виртуальную клавиатуру —
-                    // не дёргаем ACTION_CLICK. Клавиатурам нужны реальные жесты,
-                    // иначе ломается их state machine (залипают клавиши).
+                    // Bounds-check: если клик не в этом окне — следующее.
+                    val winRect = Rect()
+                    win.getBoundsInScreen(winRect)
+                    if (!winRect.contains(x, y)) continue
+                    // Клик в окне мягкой клавиатуры — аборт всего fast-path,
+                    // чтобы fallback (dispatchGesture) дошёл реальным пальцем.
+                    // Без этого клавиатура ломалась после первой же клавиши.
                     if (win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
-                        continue
+                        return false
                     }
                     val root = win.root ?: continue
                     try {
@@ -598,19 +610,9 @@ class InputService : AccessibilityService() {
     }
 
     /**
-     * Возвращает свежеobtain()ed кликабельную НЕредактируемую НЕ-WebView
-     * ноду, содержащую (x,y). Caller обязан recycle.
-     *
-     * Skip-правила (возвращаем null → fallback на dispatchGesture):
-     *  - depth > 64 (защита от глубоких Compose/WebView деревьев — StackOverflow);
-     *  - сама нода editable (isEditable / className содержит EditText /
-     *    ACTION_SET_TEXT в actionList — canonical-сигнал для Compose);
-     *  - clickable-родитель, у которого editable-потомок под этой же
-     *    координатой (TextInputLayout-pattern, Material Design): иначе
-     *    ACTION_CLICK по обёртке есть, а IME у поля не открывается;
-     *  - WebView/SurfaceView/TextureView — координаты ACTION_CLICK
-     *    по ним не honor-ятся, клик уйдёт мимо точки;
-     *  - !isVisibleToUser.
+     * Возвращает свежеobtain()ed кликабельную ноду, содержащую (x,y).
+     * Caller обязан recycle. Минимальная логика по образцу upstream 003.
+     * depth-cap (64) — защита от очень глубоких Compose/WebView trees.
      */
     private fun findClickableNodeAt(
         node: AccessibilityNodeInfo,
@@ -623,20 +625,10 @@ class InputService : AccessibilityService() {
         node.getBoundsInScreen(rect)
         if (!rect.contains(x, y)) return null
 
-        // Спускаемся в детей. Параллельно ловим: есть ли среди детей под
-        // этой же координатой editable-нода. Если да — current не годится
-        // как clickable-таргет даже будучи clickable (TextInputLayout).
-        var childEditableAtPoint = false
+        // Самая глубокая кликабельная нода — спускаемся в детей первой.
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             try {
-                if (!childEditableAtPoint) {
-                    val cRect = Rect()
-                    child.getBoundsInScreen(cRect)
-                    if (cRect.contains(x, y) && isEditableLike(child)) {
-                        childEditableAtPoint = true
-                    }
-                }
                 val found = findClickableNodeAt(child, x, y, depth + 1)
                 if (found != null) return found
             } finally {
@@ -644,31 +636,7 @@ class InputService : AccessibilityService() {
             }
         }
 
-        if (childEditableAtPoint) return null
-        if (isEditableLike(node)) return null
-
-        // Контейнеры, «жадно» поглощающие клик и игнорирующие координаты.
-        val cls = node.className?.toString() ?: ""
-        if (cls.contains("WebView") || cls.contains("SurfaceView") || cls.contains("TextureView")) {
-            return null
-        }
-
-        val visible = try { node.isVisibleToUser } catch (_: Throwable) { true }
-        if (!visible) return null
-
         return if (node.isClickable && node.isEnabled) AccessibilityNodeInfo.obtain(node) else null
-    }
-
-    private fun isEditableLike(node: AccessibilityNodeInfo): Boolean {
-        if (node.isEditable) return true
-        val cls = node.className?.toString() ?: ""
-        if (cls.contains("EditText")) return true
-        try {
-            for (a in node.actionList) {
-                if (a.id == AccessibilityNodeInfo.ACTION_SET_TEXT) return true
-            }
-        } catch (_: Throwable) {}
-        return false
     }
 
     // -----------------------------------------------------------------------

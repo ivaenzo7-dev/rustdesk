@@ -586,13 +586,10 @@ class InputService : AccessibilityService() {
                     val root = win.root ?: continue
                     try {
                         val node = findClickableNodeAt(root, x, y, 0) ?: continue
-                        try { node.refresh() } catch (_: Throwable) {}
-                        val ok = try {
-                            node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                        } catch (_: Throwable) { false }
+                        val ok = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         node.recycle()
                         if (ok) {
-                            Log.v(logTag, "NodeClick OK at $x,$y")
+                            Log.d(logTag, "NodeClick OK at $x,$y")
                             return true
                         }
                     } finally {

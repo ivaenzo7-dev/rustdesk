@@ -565,6 +565,12 @@ class InputService : AccessibilityService() {
                     if (win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY) {
                         continue
                     }
+                    // ФИКС (backport upstream 003): если клик попал в виртуальную клавиатуру —
+                    // не дёргаем ACTION_CLICK. Клавиатурам нужны реальные жесты,
+                    // иначе ломается их state machine (залипают клавиши).
+                    if (win.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                        continue
+                    }
                     val root = win.root ?: continue
                     try {
                         val node = findClickableNodeAt(root, x, y, 0) ?: continue

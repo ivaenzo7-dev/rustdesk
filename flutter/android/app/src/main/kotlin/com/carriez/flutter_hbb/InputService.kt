@@ -585,6 +585,17 @@ class InputService : AccessibilityService() {
                     }
                     val root = win.root ?: continue
                     try {
+                        // Chrome: всё его accessibility-дерево очень глубокое и
+                        // с isAccessibilityTool=true мы видим внутренние spans/
+                        // icons, по которым ACTION_CLICK уходит мимо. Это ломает
+                        // ссылки в выдаче Google, X-очистку URL bar, DELETE в
+                        // подтверждениях, IME-flicker в omnibox.
+                        // Samsung не блокирует dispatchGesture в Chrome (это не
+                        // secure-window), поэтому полностью падаем на gesture
+                        // — настоящее касание всё это решает корректно.
+                        if (root.packageName?.toString() == "com.android.chrome") {
+                            return false
+                        }
                         val node = findClickableNodeAt(root, x, y, 0) ?: continue
                         val ok = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         node.recycle()

@@ -609,10 +609,20 @@ class InputService : AccessibilityService() {
     /**
      * Возвращает свежеobtain()ed кликабельную НЕредактируемую ноду, содержащую
      * (x,y). Caller обязан recycle. depth-cap (64) — защита от глубоких
-     * Compose/WebView trees. Editable-ноды (EditText / Compose TextField /
-     * Chrome omnibox) пропускаем — ACTION_CLICK по ним с isAccessibilityTool
-     * может ловить focus-juggling в Chrome и моргать IME; пусть отработает
-     * dispatchGesture (настоящее касание) — IME поднимается чисто.
+     * Compose/WebView trees.
+     *
+     * Editable-логика: если текущая нода (или любой её предок на пути) —
+     * editable, мы НЕ возвращаем ни саму ноду, ни найденный в потомках
+     * кликабельный таргет. ACTION_CLICK по editable-полям (EditText /
+     * Compose TextField / Chrome omnibox / google.com search input в WebView)
+     * c isAccessibilityTool ловит focus-juggling и моргает IME. Пусть лучше
+     * отработает dispatchGesture (настоящее касание) — IME поднимется чисто.
+     *
+     * "Editable" определяем по двум сигналам:
+     *   • node.isEditable (классический EditText + многие Compose TextField);
+     *   • action ACTION_SET_TEXT в actionList — canonical-сигнал для HTML
+     *     <input> в WebView и для Compose-TextField на старых Compose, где
+     *     isEditable может не выставляться.
      */
     private fun findClickableNodeAt(
         node: AccessibilityNodeInfo,
@@ -625,21 +635,39 @@ class InputService : AccessibilityService() {
         node.getBoundsInScreen(rect)
         if (!rect.contains(x, y)) return null
 
+        val nodeEditable = isEditableLike(node)
+
         // Самая глубокая кликабельная нода — спускаемся в детей первой.
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             try {
                 val found = findClickableNodeAt(child, x, y, depth + 1)
-                if (found != null) return found
+                if (found != null) {
+                    // Если текущая нода — editable, найденный clickable-потомок
+                    // (span/icon внутри текстового поля) НЕ возвращаем: клик
+                    // семантически принадлежит editable-контейнеру → fallback.
+                    if (nodeEditable) return null
+                    return found
+                }
             } finally {
                 child.recycle()
             }
         }
 
-        // Editable-ноды: НЕ возвращаем как клик-таргет (см. doc выше).
-        if (node.isEditable) return null
+        // Сама нода — editable → fallback на dispatchGesture.
+        if (nodeEditable) return null
 
         return if (node.isClickable && node.isEnabled) AccessibilityNodeInfo.obtain(node) else null
+    }
+
+    private fun isEditableLike(node: AccessibilityNodeInfo): Boolean {
+        if (node.isEditable) return true
+        try {
+            for (a in node.actionList) {
+                if (a.id == AccessibilityNodeInfo.ACTION_SET_TEXT) return true
+            }
+        } catch (_: Throwable) {}
+        return false
     }
 
     // -----------------------------------------------------------------------

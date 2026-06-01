@@ -671,7 +671,7 @@ class InputService : AccessibilityService() {
         // Сама нода — editable → fallback на dispatchGesture.
         if (nodeEditable) return null
 
-        return if (node.isClickable && node.isEnabled) AccessibilityNodeInfo.obtain(node) else null
+        return if (isClickableLike(node) && node.isEnabled) AccessibilityNodeInfo.obtain(node) else null
     }
 
     private fun isEditableLike(node: AccessibilityNodeInfo): Boolean {
@@ -679,6 +679,25 @@ class InputService : AccessibilityService() {
         try {
             for (a in node.actionList) {
                 if (a.id == AccessibilityNodeInfo.ACTION_SET_TEXT) return true
+            }
+        } catch (_: Throwable) {}
+        return false
+    }
+
+    /**
+     * Кликабельность по двум сигналам:
+     *   • node.isClickable (классические View);
+     *   • action ACTION_CLICK в actionList — canonical-сигнал Compose,
+     *     где isClickable часто false, но семантический клик есть.
+     * Без этого мы пропускали Compose-кнопки (типа "Continue" в bottom-sheet
+     * Google Play "Complete account setup") и кликали clickable-scrim над
+     * ними, что закрывало sheet вместо нажатия кнопки.
+     */
+    private fun isClickableLike(node: AccessibilityNodeInfo): Boolean {
+        if (node.isClickable) return true
+        try {
+            for (a in node.actionList) {
+                if (a.id == AccessibilityNodeInfo.ACTION_CLICK) return true
             }
         } catch (_: Throwable) {}
         return false

@@ -607,9 +607,12 @@ class InputService : AccessibilityService() {
     }
 
     /**
-     * Возвращает свежеobtain()ed кликабельную ноду, содержащую (x,y).
-     * Caller обязан recycle. Минимальная логика по образцу upstream 003.
-     * depth-cap (64) — защита от очень глубоких Compose/WebView trees.
+     * Возвращает свежеobtain()ed кликабельную НЕредактируемую ноду, содержащую
+     * (x,y). Caller обязан recycle. depth-cap (64) — защита от глубоких
+     * Compose/WebView trees. Editable-ноды (EditText / Compose TextField /
+     * Chrome omnibox) пропускаем — ACTION_CLICK по ним с isAccessibilityTool
+     * может ловить focus-juggling в Chrome и моргать IME; пусть отработает
+     * dispatchGesture (настоящее касание) — IME поднимается чисто.
      */
     private fun findClickableNodeAt(
         node: AccessibilityNodeInfo,
@@ -632,6 +635,9 @@ class InputService : AccessibilityService() {
                 child.recycle()
             }
         }
+
+        // Editable-ноды: НЕ возвращаем как клик-таргет (см. doc выше).
+        if (node.isEditable) return null
 
         return if (node.isClickable && node.isEnabled) AccessibilityNodeInfo.obtain(node) else null
     }

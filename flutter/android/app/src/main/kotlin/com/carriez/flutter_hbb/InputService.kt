@@ -585,17 +585,20 @@ class InputService : AccessibilityService() {
                     }
                     val root = win.root ?: continue
                     try {
-                        // Chrome: всё его accessibility-дерево очень глубокое и
-                        // с isAccessibilityTool=true мы видим внутренние spans/
-                        // icons, по которым ACTION_CLICK уходит мимо. Это ломает
-                        // ссылки в выдаче Google, X-очистку URL bar, DELETE в
-                        // подтверждениях, IME-flicker в omnibox.
-                        // Samsung не блокирует dispatchGesture в Chrome (это не
-                        // secure-window), поэтому полностью падаем на gesture
-                        // — настоящее касание всё это решает корректно.
-                        if (root.packageName?.toString() == "com.android.chrome") {
-                            return false
-                        }
+                        // ALLOWLIST: hybrid-tap (ACTION_CLICK fast-path) включается
+                        // ТОЛЬКО для тех приложений, где Samsung реально режет
+                        // dispatchGesture — на данный момент это Google Play
+                        // (com.android.vending) и Google Play Services
+                        // (com.google.android.gms, иногда показывает account-picker
+                        // в auth-flow Play). Для всех остальных пакетов сразу
+                        // continue — fallback на dispatchGesture; это проверенный
+                        // путь, который ничего не ломает (Chrome, Opera, Firefox,
+                        // любые embedded WebViews — всё через настоящее касание).
+                        val pkg = root.packageName?.toString() ?: ""
+                        val isProtectedApp =
+                            pkg == "com.android.vending" ||
+                            pkg == "com.google.android.gms"
+                        if (!isProtectedApp) continue
                         val node = findClickableNodeAt(root, x, y, 0) ?: continue
                         val ok = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
                         node.recycle()

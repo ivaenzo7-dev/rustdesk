@@ -592,7 +592,13 @@ class InputService : AccessibilityService() {
                         //  - com.google.android.gms — Play Services (account-picker
                         //    в auth-flow Play);
                         //  - org.telegram.messenger — Telegram (по запросу,
-                        //    специфика приложения).
+                        //    специфика приложения);
+                        //  - com.whatsapp — WhatsApp (registration phone-number
+                        //    activity блокирует ВСЕ input-pipeline пути —
+                        //    dispatchGesture, shell input tap, keyevent ENTER.
+                        //    Гипотеза: ACTION_CLICK как семантическое действие
+                        //    обходит OnTouchListener и фоновый anti-bot check.
+                        //    Проверяем эмпирически. Если не сработает — убираем).
                         // Для всех остальных пакетов сразу continue → fallback на
                         // dispatchGesture; это проверенный путь, который ничего
                         // не ломает (Chrome, Opera, Firefox, embedded WebViews,
@@ -601,7 +607,8 @@ class InputService : AccessibilityService() {
                         val isProtectedApp =
                             pkg == "com.android.vending" ||
                             pkg == "com.google.android.gms" ||
-                            pkg == "org.telegram.messenger"
+                            pkg == "org.telegram.messenger" ||
+                            pkg == "com.whatsapp"
                         if (!isProtectedApp) continue
                         val node = findClickableNodeAt(root, x, y, 0) ?: continue
                         val ok = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)

@@ -655,22 +655,43 @@ class InputService : AccessibilityService() {
 
         val nodeEditable = isEditableLike(node)
 
-        // Самая глубокая кликабельная нода — спускаемся в детей первой.
+        // Идём ВО ВСЕ children и выбираем кандидата с НАИМЕНЬШЕЙ площадью —
+        // это самый специфичный клик-таргет под (x,y). Прошлая логика
+        // возвращала первый найденный non-null (depth-first), и тогда
+        // полноэкранный scrim bottom-sheet'а (index=0, leaf clickable=true)
+        // выигрывал у настоящей кнопки глубже в дереве — клик уходил в
+        // scrim → ACTION_CLICK = dismiss вместо «Continue».
+        var bestFound: AccessibilityNodeInfo? = null
+        var bestArea = Long.MAX_VALUE
         for (i in 0 until node.childCount) {
             val child = node.getChild(i) ?: continue
             try {
                 val found = findClickableNodeAt(child, x, y, depth + 1)
                 if (found != null) {
-                    // Если текущая нода — editable, найденный clickable-потомок
-                    // (span/icon внутри текстового поля) НЕ возвращаем: клик
-                    // семантически принадлежит editable-контейнеру → fallback.
-                    if (nodeEditable) return null
-                    return found
+                    if (nodeEditable) {
+                        // editable-предок «съедает» любой найденный target —
+                        // отдаём fallback на dispatchGesture.
+                        found.recycle()
+                        bestFound?.recycle()
+                        return null
+                    }
+                    val fr = Rect()
+                    found.getBoundsInScreen(fr)
+                    val area = fr.width().toLong() * fr.height().toLong()
+                    if (area < bestArea) {
+                        bestFound?.recycle()
+                        bestFound = found
+                        bestArea = area
+                    } else {
+                        found.recycle()
+                    }
                 }
             } finally {
                 child.recycle()
             }
         }
+
+        if (bestFound != null) return bestFound
 
         // Сама нода — editable → fallback на dispatchGesture.
         if (nodeEditable) return null

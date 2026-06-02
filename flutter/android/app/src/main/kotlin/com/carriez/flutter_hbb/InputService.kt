@@ -586,18 +586,22 @@ class InputService : AccessibilityService() {
                     val root = win.root ?: continue
                     try {
                         // ALLOWLIST: hybrid-tap (ACTION_CLICK fast-path) включается
-                        // ТОЛЬКО для тех приложений, где Samsung реально режет
-                        // dispatchGesture — на данный момент это Google Play
-                        // (com.android.vending) и Google Play Services
-                        // (com.google.android.gms, иногда показывает account-picker
-                        // в auth-flow Play). Для всех остальных пакетов сразу
-                        // continue — fallback на dispatchGesture; это проверенный
-                        // путь, который ничего не ломает (Chrome, Opera, Firefox,
-                        // любые embedded WebViews — всё через настоящее касание).
+                        // ТОЛЬКО для тех приложений, где dispatchGesture не справляется:
+                        //  - com.android.vending  — Google Play (Switch/Manage
+                        //    account, Sign In и пр. Samsung-blocked секурки);
+                        //  - com.google.android.gms — Play Services (account-picker
+                        //    в auth-flow Play);
+                        //  - org.telegram.messenger — Telegram (по запросу,
+                        //    специфика приложения).
+                        // Для всех остальных пакетов сразу continue → fallback на
+                        // dispatchGesture; это проверенный путь, который ничего
+                        // не ломает (Chrome, Opera, Firefox, embedded WebViews,
+                        // ESPER admin UI — всё через настоящее касание).
                         val pkg = root.packageName?.toString() ?: ""
                         val isProtectedApp =
                             pkg == "com.android.vending" ||
-                            pkg == "com.google.android.gms"
+                            pkg == "com.google.android.gms" ||
+                            pkg == "org.telegram.messenger"
                         if (!isProtectedApp) continue
                         val node = findClickableNodeAt(root, x, y, 0) ?: continue
                         val ok = node.performAction(AccessibilityNodeInfo.ACTION_CLICK)

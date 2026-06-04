@@ -46,6 +46,26 @@ class RentalBannerService : Service() {
         const val ACTION_SHOW = "com.carriez.flutter_hbb.BANNER_SHOW"
         const val ACTION_HIDE = "com.carriez.flutter_hbb.BANNER_HIDE"
 
+        // -------------------------------------------------------------------
+        // ВРЕМЕННО ВЫКЛЮЧЕНО (2026-05-31).
+        //
+        // Без hidden_api_policy=1 на устройстве штора закрывает экран не только
+        // от сотрудника, но и от админа: setSkipScreenshot — hidden API, без
+        // глобального разрешения он не применяется, штора попадает в стрим.
+        //
+        // На флот ~60 телефонов настройка ещё не раскатана. Пока не выставлена
+        // на всех — оставляем фичу выключенной: show() возвращает false без
+        // побочных эффектов. Все .hide() оставлены как было (идемпотентны).
+        //
+        // Включение — после раскатки на все устройства:
+        //   adb shell settings put global hidden_api_policy_pre_p_apps 1
+        //   adb shell settings put global hidden_api_policy_p_apps 1
+        //   adb shell settings put global hidden_api_policy 1
+        //   adb shell settings get global hidden_api_policy   # должно вернуть 1
+        // → выставить ENABLED = true и пересобрать APK.
+        // -------------------------------------------------------------------
+        private const val ENABLED = false
+
         @Volatile var isShowing = false
             private set
 
@@ -55,6 +75,10 @@ class RentalBannerService : Service() {
          * не давать сессии начаться).
          */
         fun show(context: Context): Boolean {
+            if (!ENABLED) {
+                Log.w(TAG, "show() SKIPPED — RentalBanner временно отключён (ENABLED=false; см. комментарий в RentalBannerService.kt)")
+                return false
+            }
             Log.i(TAG, "show() entry, sdk=${Build.VERSION.SDK_INT}, isShowing=$isShowing")
             toastUi(context, "RentalBanner: show() called")
 

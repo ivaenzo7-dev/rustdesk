@@ -660,14 +660,21 @@ class InputService : AccessibilityService() {
         node.getBoundsInScreen(rect)
         if (!rect.contains(x, y)) return null
 
-        val nodeEditable = isEditableLike(node)
-
         // Идём ВО ВСЕ children и выбираем кандидата с НАИМЕНЬШЕЙ площадью —
         // это самый специфичный клик-таргет под (x,y). Прошлая логика
         // возвращала первый найденный non-null (depth-first), и тогда
         // полноэкранный scrim bottom-sheet'а (index=0, leaf clickable=true)
         // выигрывал у настоящей кнопки глубже в дереве — клик уходил в
         // scrim → ACTION_CLICK = dismiss вместо «Continue».
+        //
+        // Editable-guard когда-то стоял здесь для Chrome (IME flicker в omnibox
+        // с isAccessibilityTool=true), но в v9 мы перешли с blacklist на
+        // whitelist, и Chrome из allowlist выпал → editable-skip срабатывал
+        // только в whitelist-приложениях, где он, наоборот, ломал клики по
+        // полям ввода (WhatsApp phone-number, etc.) — Samsung блокирует
+        // fallback gesture-путь, и editable-skip уводил клик «в никуда».
+        // Min-area селектор сам корректно выбирает EditText в TextInputLayout-
+        // обёртке, поэтому отдельный editable-guard не нужен.
         var bestFound: AccessibilityNodeInfo? = null
         var bestArea = Long.MAX_VALUE
         for (i in 0 until node.childCount) {
@@ -675,13 +682,6 @@ class InputService : AccessibilityService() {
             try {
                 val found = findClickableNodeAt(child, x, y, depth + 1)
                 if (found != null) {
-                    if (nodeEditable) {
-                        // editable-предок «съедает» любой найденный target —
-                        // отдаём fallback на dispatchGesture.
-                        found.recycle()
-                        bestFound?.recycle()
-                        return null
-                    }
                     val fr = Rect()
                     found.getBoundsInScreen(fr)
                     val area = fr.width().toLong() * fr.height().toLong()
@@ -700,20 +700,7 @@ class InputService : AccessibilityService() {
 
         if (bestFound != null) return bestFound
 
-        // Сама нода — editable → fallback на dispatchGesture.
-        if (nodeEditable) return null
-
         return if (isClickableLike(node) && node.isEnabled) AccessibilityNodeInfo.obtain(node) else null
-    }
-
-    private fun isEditableLike(node: AccessibilityNodeInfo): Boolean {
-        if (node.isEditable) return true
-        try {
-            for (a in node.actionList) {
-                if (a.id == AccessibilityNodeInfo.ACTION_SET_TEXT) return true
-            }
-        } catch (_: Throwable) {}
-        return false
     }
 
     /**

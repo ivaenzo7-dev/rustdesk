@@ -193,6 +193,10 @@ class MainService : Service() {
                 // Сессия завершена rust-стороной — убираем штору.
                 Log.i("RentalBanner", "[MainService] rust stop_capture -> hide curtain")
                 RentalBannerService.hide(this@MainService)
+                // Вытесняем историю буфера обмена Samsung Keyboard — заливаем
+                // recent-list уникальными невидимыми клипами, реальные записи
+                // предыдущей сессии уезжают за хвост и пропадают.
+                ClipboardFlusher.flushAsync(this@MainService)
             }
             "half_scale" -> {
                 val halfScale = arg1.toBoolean()
@@ -298,6 +302,9 @@ class MainService : Service() {
         // Сервис уничтожается — убедимся, что штора не осталась висеть.
         Log.i("RentalBanner", "[MainService] onDestroy -> hide curtain")
         RentalBannerService.hide(this@MainService)
+        // Доп. страховка: ещё раз вытеснить историю буфера — на случай если
+        // сессия завершилась не через rust stop_capture, а аварийно.
+        ClipboardFlusher.flushAsync(this@MainService)
         stopService(Intent(this, FloatingWindowService::class.java))
         super.onDestroy()
     }

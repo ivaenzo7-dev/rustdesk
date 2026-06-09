@@ -9,21 +9,29 @@ package com.carriez.flutter_hbb
  * упирается в CLEAR_APP_USER_DATA. История переживает `pm clear` агента и
  * становится видна следующему арендатору при открытии клавиатуры.
  *
- * Идея: Samsung Keyboard ведёт recent-list ограниченного размера (~20–30
- * элементов на One UI 5–7), слушает события системного клипборда через
- * собственный ClipboardSaveService и добавляет каждый новый клип в очередь.
- * Лупим N уникальных невидимых клипов с паузой между ними — старые
- * (потенциально приватные) записи вытесняются за хвост и исчезают.
+ * Идея: Samsung Keyboard слушает события системного клипборда и кладёт
+ * каждый клип в свой recent-list. Лупим N клипов с уникальным невидимым
+ * содержимым — старые (потенциально приватные) записи вытесняются за хвост.
  *
- * Уникальность достигается варьируемым количеством пробелов: Samsung
- * дедуплицирует подряд идущие одинаковые клипы, поэтому каждый клип
- * должен отличаться от соседа.
+ * v2 (2026-06-07) — фикс дедупликации:
+ *   v1 использовал пробелы разной длины (" ", "  ", "   "...). Samsung
+ *   нормализовал whitespace и схлопывал 40 клипов в 2-3 записи (подтверждено
+ *   logcat'ом на A26 Android 16: flush done written=40, в history панели
+ *   видно ~3 записи). Решение — использовать невидимые Unicode-символы
+ *   ZWSP (U+200B), ZWNJ (U+200C), ZWJ (U+200D), BOM (U+FEFF) в уникальной
+ *   комбинации на каждой итерации. Samsung не может нормализовать их без
+ *   нарушения настоящего содержимого, поэтому каждый клип уникален и
+ *   попадает в history отдельной записью.
  *
  * Финальным шагом вызывается ClipboardManager.clearPrimaryClip() — закрывает
  * дыру с системным primary clip в /data/clipboard/, который как раз и
  * переживает `pm clear` пакета клавиатуры.
  *
  * Триггер: MainService — после rust-callback'а stop_capture и в onDestroy.
+ *
+ * Ограничение: text-флуш НЕ вытесняет image-клипы Samsung Keyboard (там
+ * отдельная очередь). Картинки придётся вытеснять image-флушем — отдельный
+ * шаг с FileProvider, отложен на v3.
  */
 
 import android.content.ClipData
@@ -39,13 +47,18 @@ object ClipboardFlusher {
 
     private const val TAG = "ClipboardFlusher"
 
-    // 40 заходов с запасом покрывают recent-list любой One UI 5–7
-    // (~20–30 элементов). Меньше — могут остаться хвостовые записи.
-    private const val DEFAULT_COUNT = 40
+    // 60 заходов с запасом — на A26 Android 16 / One UI 8 recent-list
+    // может быть длиннее 30. v1 с 40 не дошёл до настоящих вытеснений
+    // из-за дедупликации; теперь каждый клип уникален → каждый записывается.
+    private const val DEFAULT_COUNT = 60
 
-    // Пауза между заливками. Без неё Samsung-сервис не успевает
-    // обработать каждое событие и часть теряется.
+    // Пауза между заливками — иначе Samsung-сервис теряет события.
     private const val STEP_DELAY_MS = 60L
+
+    // 4 невидимых Unicode-символа: ZWSP, ZWNJ, ZWJ, BOM.
+    // Любые их комбинации визуально пусты, но уникальны для дедупликатора.
+    // Записаны через \u-эскейпы — невидимые литералы в исходниках коварны.
+    private val ZW_CHARS = charArrayOf('\u200B', '\u200C', '\u200D', '\uFEFF')
 
     private val isRunning = AtomicBoolean(false)
 
@@ -74,6 +87,22 @@ object ClipboardFlusher {
         }
     }
 
+    /**
+     * Кодирует index в строку из ZW-символов base-4.
+     * index 0 → ZWSP, index 1 → ZWNJ, index 4 → ZWSP+ZWNJ, и т.д.
+     * Каждый index даёт уникальную (невидимую) последовательность.
+     */
+    private fun encodeUniqueZW(index: Int): String {
+        if (index == 0) return ZW_CHARS[0].toString()
+        val sb = StringBuilder()
+        var n = index
+        while (n > 0) {
+            sb.append(ZW_CHARS[n and 0x3])
+            n = n shr 2
+        }
+        return sb.toString()
+    }
+
     private fun flush(context: Context, count: Int) {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         if (cm == null) {
@@ -81,17 +110,20 @@ object ClipboardFlusher {
             return
         }
 
-        Log.i(TAG, "flush start: count=$count")
+        Log.i(TAG, "flush start: count=$count (ZW-unicode unique)")
         var written = 0
+        val startedAt = System.currentTimeMillis()
+
         for (i in 0 until count) {
             try {
-                // Варьируем количество пробелов (1..5), чтобы Samsung не
-                // дедуплицировал соседние клипы. Визуально все они "пустые".
-                val pad = " ".repeat(i % 5 + 1)
-                cm.setPrimaryClip(ClipData.newPlainText("", pad))
+                // Уникальная ZW-последовательность + один видимый пробел.
+                // Пробел нужен, чтобы Samsung не отбраковал клип как "пустой".
+                val text = " " + encodeUniqueZW(i)
+                // Label тоже уникальный — на случай если дедупликатор смотрит на него.
+                val label = "fl_${startedAt}_$i"
+                cm.setPrimaryClip(ClipData.newPlainText(label, text))
                 written++
             } catch (e: Exception) {
-                // Single-step failures не должны прерывать поток
                 Log.w(TAG, "setPrimaryClip step=$i failed: ${e.javaClass.simpleName}: ${e.message}")
             }
             try {
@@ -110,6 +142,6 @@ object ClipboardFlusher {
                 Log.w(TAG, "clearPrimaryClip failed: ${e.message}")
             }
         }
-        Log.i(TAG, "flush done: written=$written")
+        Log.i(TAG, "flush done: written=$written (${System.currentTimeMillis() - startedAt}ms)")
     }
 }

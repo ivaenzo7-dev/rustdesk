@@ -345,6 +345,12 @@ impl Subscriber for ConnInner {
 // we care about (200-300ms) and gives ~2x faster recovery from delay bursts.
 const TEST_DELAY_TIMEOUT: Duration = Duration::from_millis(400);
 const SEC30: Duration = Duration::from_secs(30);
+// Dead-recv timeout: если от админа не было ни одного сообщения N секунд —
+// считаем соединение разорванным и закрываем. На мобильном CGNAT half-open
+// канал часто переживает несколько секунд, после чего трафик глохнет.
+// 30с (старый SEC30) даёт юзеру долгое окно "висит-не-работает". 15с — тот
+// же эффект (закрытие + запрос пароля), но в 2× быстрее.
+const DEAD_RECV_TIMEOUT: Duration = Duration::from_secs(15);
 const H1: Duration = Duration::from_secs(3600);
 const MILLI1: Duration = Duration::from_millis(1);
 const SEND_TIMEOUT_VIDEO: u64 = 12_000;
@@ -925,7 +931,7 @@ impl Connection {
                     conn.update_supported_encoding();
                 }
                 _ = test_delay_timer.tick() => {
-                    if last_recv_time.elapsed() >= SEC30 {
+                    if last_recv_time.elapsed() >= DEAD_RECV_TIMEOUT {
                         conn.on_close("Timeout", true).await;
                         break;
                     }

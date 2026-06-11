@@ -180,6 +180,28 @@ void runMainApp(bool startService) async {
 
 void runMobileApp() async {
   await initEnv(kAppTypeMain);
+
+  // Аренда телефонов: всегда форсим relay на стороне controlled (телефона).
+  // На мобильной сети CGNAT-операторов UDP-punch формально проходит, но
+  // обратный канал умирает на CONNECT_TIMEOUT=18с (см. логи clients.rs:595)
+  // → дребезг "первая попытка зависла, пришлось ввести пароль повторно".
+  // Force-always-relay снимает эту 18с задержку: коннект сразу через relay
+  // (`hbbr.mobirent.io` по дефолту) за ~0.6с. Накладной +30-50мс латентности
+  // для удалёнки телефоном незаметны.
+  //
+  // Включаем ТОЛЬКО если ещё не выставлено явно — уважаем ручную настройку.
+  if (isAndroid) {
+    try {
+      final cur = bind.mainGetOptionSync(key: kOptionForceAlwaysRelay);
+      if (cur != 'Y' && cur != 'N') {
+        await bind.mainSetOption(key: kOptionForceAlwaysRelay, value: 'Y');
+        debugPrint("force-always-relay → Y (default for rental fleet)");
+      }
+    } catch (e) {
+      debugPrint("Error setting force-always-relay default: $e");
+    }
+  }
+
   checkUpdate();
   if (isAndroid) androidChannelInit();
   if (isAndroid) platformFFI.syncAndroidServiceAppDirConfigPath();

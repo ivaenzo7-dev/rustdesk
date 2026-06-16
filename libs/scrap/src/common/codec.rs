@@ -232,8 +232,15 @@ impl Encoder {
         }
         let h264_useable =
             _all_support_h264_decoding && (h264vram_encoding || h264hw_encoding.is_some());
-        let h265_useable =
-            _all_support_h265_decoding && (h265vram_encoding || h265hw_encoding.is_some());
+        // Wave 2 / E1: on Android we have a native MediaCodec HEVC encoder
+        // (NativeHevcEncoder.kt, surface-input path). It is not surfaced via the
+        // hwcodec/vram Rust features, so without this override `h265_useable`
+        // would always be false and negotiated_codec() would fall back to VP9,
+        // which sends nothing because VirtualDisplay's output goes to the
+        // encoder Surface, not to ImageReader.
+        let h265_native_android_encoder = cfg!(target_os = "android");
+        let h265_useable = _all_support_h265_decoding
+            && (h265vram_encoding || h265hw_encoding.is_some() || h265_native_android_encoder);
         let mut format = ENCODE_CODEC_FORMAT.lock().unwrap();
         let preferences: Vec<_> = decodings
             .iter()
@@ -350,6 +357,10 @@ impl Encoder {
         if enable_vram_option(true) {
             encoding.h264 |= VRamEncoder::available(CodecFormat::H264).len() > 0;
             encoding.h265 |= VRamEncoder::available(CodecFormat::H265).len() > 0;
+        }
+        #[cfg(target_os = "android")]
+        {
+            encoding.h265 = true;
         }
         encoding
     }

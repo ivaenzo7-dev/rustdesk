@@ -64,7 +64,12 @@ class RentalBannerService : Service() {
         //   adb shell settings get global hidden_api_policy   # должно вернуть 1
         // → выставить ENABLED = true и пересобрать APK.
         // -------------------------------------------------------------------
-        private const val ENABLED = false
+        // ВКЛЮЧЕНО на perf/fast-tap для полного боевого теста (fast-tap + шторка +
+        // force-relay). ПРЕДУСЛОВИЕ: на устройстве ДОЛЖНО стоять hidden_api_policy=1
+        // (см. команды выше), иначе setSkipScreenshot не применится и штора попадёт
+        // в стрим — админ увидит шторку вместо экрана. Не мёржить в флот, пока
+        // hidden_api_policy=1 не раскатан на все телефоны.
+        private const val ENABLED = true
 
         @Volatile var isShowing = false
             private set

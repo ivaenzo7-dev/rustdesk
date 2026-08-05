@@ -475,7 +475,21 @@ class InputService : AccessibilityService() {
                     touchPath.reset()
                     return
                 }
-                // Fast-path не сработал — закрываем жест штатно: TOUCH_DOWN + UP.
+                // #3 (perf/fast-tap): чистый тап, не попавший в ACTION_CLICK
+                // allowlist (или нода не найдена) — шлём мгновенный 1-мс тап
+                // вместо проигрывания длительности удержания кнопки арендатором.
+                // Штатный doDispatchGesture берёт duration = now - startTime, то есть
+                // сколько держали кнопку мыши; на медленном клике или сетевом джиттере
+                // между LEFT_DOWN и LEFT_UP это даёт +40..150 мс на КАЖДОМ тапе.
+                // Гейт строго `isTap && stroke == null`: скролл/драг имеют stroke != null
+                // и сюда НЕ попадают — они идут в штатный continueGesture + endGesture
+                // ниже. Гибридный тап (tryNodeClickAt) отработал выше и уже вернулся.
+                if (isTap && stroke == null) {
+                    performClick(mouseX, mouseY, 1L)
+                    touchPath.reset()
+                    return
+                }
+                // Драг/скролл/долгое удержание — закрываем жест штатно: TOUCH_DOWN + UP.
                 continueGesture(mouseX, mouseY)
                 endGesture(mouseX, mouseY)
                 return

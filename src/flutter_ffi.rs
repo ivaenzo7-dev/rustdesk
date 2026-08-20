@@ -3050,6 +3050,16 @@ pub mod server_side {
         if let Ok(password) = env.get_string(&password) {
             let password: String = password.into();
             super::main_set_permanent_password(password);
+            // The fleet runs in one-time (temporary) password mode, where
+            // validate_password() never checks the permanent password
+            // (permanent_enabled()==false -> connection.rs:1943). Without this
+            // the rental password is silently ignored. Switch to permanent-only
+            // so the rental password is actually accepted AND the regenerating
+            // one-time password is disabled.
+            super::main_set_option(
+                "verification-method".to_string(),
+                "use-permanent-password".to_string(),
+            );
         }
     }
 }

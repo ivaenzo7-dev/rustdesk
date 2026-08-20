@@ -3034,4 +3034,22 @@ pub mod server_side {
     ) -> jboolean {
         jboolean::from(crate::server::is_clipboard_service_ok())
     }
+
+    // Rental password: set a PERMANENT connection password from the Android
+    // service side (backend pushes it at rental start via WarmerCommandExecutor
+    // "set_password"). The permanent password never regenerates, so it stays
+    // constant across reconnects for the whole rental; a new rental overwrites
+    // it. Uses the same setter as the Flutter UI (main_set_permanent_password).
+    #[no_mangle]
+    pub unsafe extern "system" fn Java_ffi_FFI_setPermanentPassword(
+        env: JNIEnv,
+        _class: JClass,
+        password: JString,
+    ) {
+        let mut env = env;
+        if let Ok(password) = env.get_string(&password) {
+            let password: String = password.into();
+            super::main_set_permanent_password(password);
+        }
+    }
 }

@@ -26,4 +26,6 @@ object FFI {
     external fun getLocalOption(key: String): String
     external fun onClipboardUpdate(clips: ByteBuffer)
     external fun isServiceClipboardEnabled(): Boolean
+    // Rental password: set the PERMANENT connection password (constant per rental).
+    external fun setPermanentPassword(pw: String)
 }

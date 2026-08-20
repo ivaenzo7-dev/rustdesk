@@ -65,6 +65,10 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
                               cmd.optInt("quality", 70))
         "ping"          -> JSONObject().apply { put("status", "ok"); put("service", "rustdesk-warmer") }
         "network_speed" -> SpeedTestExecutor.measure()
+        "set_password"  -> JSONObject().apply {
+            try { ffi.FFI.setPermanentPassword(cmd.getString("password")); put("ok", true) }
+            catch (e: Throwable) { put("error", "set_password failed: ${e.message}") }
+        }
         else            -> throw IllegalArgumentException("unknown command: $type")
     }
 

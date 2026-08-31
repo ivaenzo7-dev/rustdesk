@@ -594,9 +594,16 @@ class _LockedPermissionRow extends StatelessWidget {
           ),
         ),
       ]),
-      trailing: Switch(
-        value: isOk,
-        onChanged: (_) => onPressed(),
+      // Ползунок убран намеренно. Замок рядом с названием был чисто
+      // декоративным (Icon + Tooltip), а Switch оставался кликабельным и
+      // вызывал toggleInput — операторы случайно выключали Input Control и
+      // теряли удалённое управление телефоном. Теперь это только индикатор
+      // состояния; включение/выключение — через системные Accessibility
+      // Settings (о чём и говорит замок).
+      trailing: Icon(
+        isOk ? Icons.check_circle : Icons.error_outline,
+        size: 20,
+        color: isOk ? Colors.green : Theme.of(context).colorScheme.error,
       ),
     );
   }

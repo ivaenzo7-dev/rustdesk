@@ -310,6 +310,13 @@ impl Encoder {
             }
             PreferCodec::Auto => auto_codec,
         };
+        // Android rental fleet: hard-lock to the VPX family. Even if a peer
+        // somehow negotiated H264/H265/AV1, coerce to VP9 (the VP8|VP9 encoder
+        // arm handles it) so the host never runs a non-VPX encoder.
+        #[cfg(target_os = "android")]
+        if *format != CodecFormat::VP8 && *format != CodecFormat::VP9 {
+            *format = CodecFormat::VP9;
+        }
         if decodings.len() > 0 {
             log::info!(
                 "usable: vp8={vp8_useable}, av1={av1_useable}, h264={h264_useable}, h265={h265_useable}",
@@ -350,6 +357,15 @@ impl Encoder {
         if enable_vram_option(true) {
             encoding.h264 |= VRamEncoder::available(CodecFormat::H264).len() > 0;
             encoding.h265 |= VRamEncoder::available(CodecFormat::H265).len() > 0;
+        }
+        // Android rental fleet: advertise ONLY the web-decodable VPX family.
+        // Never offer H264/H265/AV1 so no peer (browser or desktop client) can
+        // pull the host onto a slow-encode / non-web-decodable path.
+        #[cfg(target_os = "android")]
+        {
+            encoding.h264 = false;
+            encoding.h265 = false;
+            encoding.av1 = false;
         }
         encoding
     }
@@ -1033,7 +1049,9 @@ pub fn codec_thread_num(limit: usize) -> usize {
 fn disable_av1() -> bool {
     // aom is very slow for x86 sciter version on windows x64
     // disable it for all 32 bit platforms
-    std::mem::size_of::<usize>() == 4
+    // Android rental fleet: force off — the fleet is locked to the web-decodable
+    // VPX family (VP8/VP9); software AV1 encode is far too heavy on the budget SoC.
+    std::mem::size_of::<usize>() == 4 || cfg!(target_os = "android")
 }
 
 #[cfg(not(target_os = "ios"))]

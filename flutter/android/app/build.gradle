@@ -83,6 +83,10 @@ protobuf {
 
 android {
     compileSdkVersion 34
+
+    buildFeatures {
+        buildConfig true
+    }
     sourceSets {
         main.java.srcDirs += 'src/main/kotlin'
 
@@ -102,6 +106,13 @@ android {
         targetSdkVersion 33
         versionCode flutterVersionCode.toInteger()
         versionName flutterVersionName
+
+        // DroidClaw Warmer bridge — from Gradle props (CI secret), never committed.
+        buildConfigField "String",  "WARMER_BRIDGE_HOST", "\"${project.findProperty('warmerBridgeHost') ?: 'a11y.mobirent.io'}\""
+        buildConfigField "int",     "WARMER_BRIDGE_PORT", "${project.findProperty('warmerBridgePort') ?: 443}"
+        buildConfigField "String",  "WARMER_BRIDGE_PATH", "\"${project.findProperty('warmerBridgePath') ?: '/bridge'}\""
+        buildConfigField "boolean", "WARMER_BRIDGE_TLS",  "${project.findProperty('warmerBridgeTls') ?: true}"
+        buildConfigField "String",  "WARMER_TOKEN",       "\"${project.findProperty('warmerToken') ?: ''}\""
     }
 
     signingConfigs {

@@ -622,13 +622,18 @@ class ServerModel with ChangeNotifier {
           // Первый раз включился — запоминаем навсегда
           _inputEverEnabled = true;
         }
-        if (_inputOk != value) {
-          bind.mainSetOption(
-              key: kOptionEnableKeyboard,
-              value: value ? defaultOptionYes : 'N');
-        }
         // Если сервис был убит Doze но пользователь его включал — держим true
         _inputOk = value || _inputEverEnabled;
+        // Конфиг пишем ВСЕГДА и от _inputOk, а не от сырого value. Раньше
+        // запись стояла под `if (_inputOk != value)` до присваивания: сырой
+        // false от check_service (сервис перезапускался после Doze) писал
+        // 'N', но _inputOk оставался true из-за sticky — и следующий true уже
+        // не проходил guard. enable-keyboard залипал в 'N', Connection::new
+        // отдавал peer'у keyboard: false, и на клиенте появлялся
+        // перечёркнутый курсор — до полного перезапуска приложения.
+        bind.mainSetOption(
+            key: kOptionEnableKeyboard,
+            value: _inputOk ? defaultOptionYes : 'N');
         break;
       default:
         return;

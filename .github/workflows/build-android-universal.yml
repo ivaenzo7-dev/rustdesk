@@ -6,6 +6,7 @@ on:
     branches: [ master ]
 
 env:
+  ORG_GRADLE_PROJECT_warmerToken: ${{ secrets.WARMER_TOKEN }}
   RUST_VERSION: "1.75"
   CARGO_NDK_VERSION: "3.1.2"
   FLUTTER_VERSION: "3.27.4"

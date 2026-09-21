@@ -27,6 +27,7 @@ class WarmerWsClient(
     private val port: Int,
     private val path: String,
     private val token: String,
+    private val tls: Boolean = true,
     private val handler: Handler,
 ) {
 
@@ -83,11 +84,21 @@ class WarmerWsClient(
     }
 
     private fun connectAndPump() {
-        val s = Socket()
-        s.connect(InetSocketAddress(host, port), 10_000)
-        s.soTimeout      = 0
-        s.keepAlive      = true
-        s.tcpNoDelay     = true
+        val underlying = Socket()
+        underlying.connect(InetSocketAddress(host, port), 10_000)
+        underlying.keepAlive  = true
+        underlying.tcpNoDelay = true
+        // wss: layer TLS over the connected socket, with SNI + hostname verification.
+        val s: Socket = if (tls) {
+            val factory = javax.net.ssl.SSLSocketFactory.getDefault() as javax.net.ssl.SSLSocketFactory
+            val ssl = factory.createSocket(underlying, host, port, true) as javax.net.ssl.SSLSocket
+            val prm = ssl.sslParameters
+            prm.endpointIdentificationAlgorithm = "HTTPS"
+            ssl.sslParameters = prm
+            ssl.startHandshake()
+            ssl
+        } else underlying
+        s.soTimeout = 0
         socket = s
 
         val o = s.getOutputStream()

@@ -127,6 +127,8 @@ class InputService : AccessibilityService() {
     private var fakeEditTextForTextStateCalculation: EditText? = null
     private var lastX = 0
     private var lastY = 0
+    private var gestureDownX = 0   // true gesture-start, for WarmerRecorder drag/swipe
+    private var gestureDownY = 0
     private val volumeController: VolumeController by lazy {
         VolumeController(applicationContext.getSystemService(AUDIO_SERVICE) as AudioManager)
     }
@@ -452,6 +454,7 @@ class InputService : AccessibilityService() {
             }, longPressDuration)
             leftIsDown = true
             startGesture(mouseX, mouseY)
+            gestureDownX = mouseX; gestureDownY = mouseY
             return
         }
 
@@ -465,6 +468,7 @@ class InputService : AccessibilityService() {
                 val tapDuration = System.currentTimeMillis() - lastTouchGestureStartTime
                 val delta = abs(mouseX - lastX) + abs(mouseY - lastY)
                 val isTap = tapDuration < 300L && delta < 20
+                if (WarmerRecorder.recording) WarmerRecorder.onPointerUp(this, mouseX, mouseY, isTap, gestureDownX, gestureDownY)
                 // Чистый тап (без LEFT_MOVE между DOWN и UP) → пробуем
                 // ACTION_CLICK по найденной accessibility-ноде. Samsung One UI
                 // режет dispatchGesture в protected windows (Play Store login,

@@ -68,7 +68,7 @@ class WarmerCommandExecutor(private val service: AccessibilityService) {
                               cmd.optInt("quality", 70))
         "ping"          -> JSONObject().apply { put("status", "ok"); put("service", "rustdesk-warmer") }
         "network_speed" -> SpeedTestExecutor.measure()
-        "record_start"  -> { WarmerRecorder.start(); JSONObject().apply { put("ok", true); put("recording", true) } }
+        "record_start"  -> { WarmerRecorder.start(service); JSONObject().apply { put("ok", true); put("recording", true) } }
         "record_stop"   -> WarmerRecorder.stop(service)
         "record_mark_field" -> WarmerRecorder.markField(service, cmd.optString("var"))
         else            -> throw IllegalArgumentException("unknown command: $type")

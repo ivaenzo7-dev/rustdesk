@@ -90,8 +90,8 @@ class WarmerWsClient(
         underlying.tcpNoDelay = true
         // wss: layer TLS over the connected socket, with SNI + hostname verification.
         val s: Socket = if (tls) {
-            val ssl = javax.net.ssl.SSLSocketFactory.getDefault()
-                .createSocket(underlying, host, port, true) as javax.net.ssl.SSLSocket
+            val factory = javax.net.ssl.SSLSocketFactory.getDefault() as javax.net.ssl.SSLSocketFactory
+            val ssl = factory.createSocket(underlying, host, port, true) as javax.net.ssl.SSLSocket
             val prm = ssl.sslParameters
             prm.endpointIdentificationAlgorithm = "HTTPS"
             ssl.sslParameters = prm

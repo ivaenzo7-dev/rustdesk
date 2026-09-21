@@ -465,6 +465,7 @@ class InputService : AccessibilityService() {
                 val tapDuration = System.currentTimeMillis() - lastTouchGestureStartTime
                 val delta = abs(mouseX - lastX) + abs(mouseY - lastY)
                 val isTap = tapDuration < 300L && delta < 20
+                if (WarmerRecorder.recording) WarmerRecorder.onPointerUp(this, mouseX, mouseY, isTap, lastX, lastY)
                 // Чистый тап (без LEFT_MOVE между DOWN и UP) → пробуем
                 // ACTION_CLICK по найденной accessibility-ноде. Samsung One UI
                 // режет dispatchGesture в protected windows (Play Store login,

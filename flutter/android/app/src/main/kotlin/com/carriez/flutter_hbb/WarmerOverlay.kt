@@ -47,6 +47,7 @@ object WarmerOverlay {
                     text = IDLE_TEXT
                     setTextColor(Color.WHITE)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
+                    minWidth = dp(ctx, 190); maxLines = 1; gravity = Gravity.CENTER  // steady size across states
                     val padH = dp(ctx, 18); val padV = dp(ctx, 12)
                     setPadding(padH, padV, padH, padV)
                     background = bg("#16a34a", ctx)
@@ -90,17 +91,24 @@ object WarmerOverlay {
         }
     }
 
-    /** Visual-only confirmation that a field was marked (host phone: no sound, no vibration). */
-    fun flash(label: String?) {
+    /** Visual-only confirmation (host phone: no sound, no vibration).
+     *  ok=true → green "✓ имя"; ok=false → red "✗ не определено". */
+    fun flash(label: String?, ok: Boolean = true) {
         main.post {
             val v = view ?: return@post
             try {
-                val short = label?.substringAfterLast('/')?.take(22)
-                v.text = if (short.isNullOrBlank()) "✓ помечено" else "✓ $short"
-                v.background = bg("#0f7a35", v.context)          // darker confirm-green pulse
+                if (ok) {
+                    val short = label?.substringAfterLast('/')?.take(22)
+                    v.text = if (short.isNullOrBlank()) "✓ помечено" else "✓ $short"
+                    v.background = bg("#0f7a35", v.context)       // confirm green
+                } else {
+                    v.text = "✗ не определено"
+                    v.background = bg("#b91c1c", v.context)       // error red
+                }
+                v.post { updateRect() }
                 revert?.let { main.removeCallbacks(it) }
-                val r = Runnable { view?.let { it.text = IDLE_TEXT; it.background = bg("#16a34a", it.context) } }
-                revert = r; main.postDelayed(r, 1100)
+                val r = Runnable { view?.let { it.text = IDLE_TEXT; it.background = bg("#16a34a", it.context); it.post { updateRect() } } }
+                revert = r; main.postDelayed(r, 1200)
             } catch (e: Exception) { Log.w(TAG, "flash failed: ${e.message}") }
         }
     }

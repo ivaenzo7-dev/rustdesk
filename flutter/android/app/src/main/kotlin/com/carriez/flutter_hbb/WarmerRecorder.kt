@@ -63,32 +63,84 @@ object WarmerRecorder {
         return out
     }
 
-    /** Inline field marking (Variant A). Marks the currently-focused field as an input
-     *  step named [varName]; strips any keyboard taps already recorded for it. */
+    /** Bubble marking (Variant A). Marks whatever element the user last touched:
+     *  a text field becomes a variable `input` step; any other element (link, image,
+     *  video, button) becomes a named tap-`target`. Honest result — flashes the resolved
+     *  name, or "не определено" (ok=false) when nothing under the last tap can be resolved. */
     @Synchronized
     fun markField(svc: AccessibilityService, varName: String?): JSONObject {
         if (!recording) return JSONObject().apply { put("ok", false); put("error", "not recording") }
-        // Resolve the field: prefer the actually-focused input, else the last tap.
+
         var fx = -1; var fy = -1; var anchor: String? = null
+        var editable = false
+
+        // 1) A focused text field wins (Variant B may already be capturing it).
         try {
             val f = svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            if (f != null) { val r = Rect(); f.getBoundsInScreen(r); fx = r.centerX(); fy = r.centerY(); anchor = anchorOf(f); f.recycleSafe() }
+            if (f != null) {
+                val r = Rect(); f.getBoundsInScreen(r)
+                fx = r.centerX(); fy = r.centerY(); anchor = anchorOf(f); editable = true
+                f.recycleSafe()
+            }
         } catch (_: Exception) {}
-        // Strip trailing keyboard-region taps + the field-focus tap already recorded.
-        for (i in steps.length() - 1 downTo 0) {
-            val s = steps.optJSONObject(i) ?: break
-            if (s.optString("type") == "tap") {
-                val ty = s.optInt("y", 0)
-                if (ty > KEYBOARD_TOP_Y) { steps.remove(i); continue }           // typed keyboard tap
-                if (fx < 0) { fx = s.optInt("x"); fy = ty; anchor = s.optString("label", null) }
-                steps.remove(i); break                                            // the field-focus tap
-            } else break
+
+        // 2) Otherwise resolve whatever element sits under the last real (non-keyboard) tap.
+        var lastTapIdx = -1
+        if (fx < 0) {
+            for (i in steps.length() - 1 downTo 0) {
+                val s = steps.optJSONObject(i) ?: break
+                if (s.optString("type") != "tap") break
+                if (s.optInt("y", 0) > KEYBOARD_TOP_Y) continue     // keyboard tap — skip, don't consume
+                lastTapIdx = i; break
+            }
+            if (lastTapIdx >= 0) {
+                val s = steps.optJSONObject(lastTapIdx)
+                fx = s.optInt("x"); fy = s.optInt("y")
+                val n = nodeAt(svc, fx, fy)
+                editable = n?.let { isEditable(it) } == true
+                anchor = anchorOf(n) ?: s.optString("label", null)
+                n?.recycleSafe()
+            }
         }
-        capturing = true; capX = fx; capY = fy; capAnchor = anchor; capVar = if (varName.isNullOrBlank()) "field_${++fieldCounter}" else varName
+
+        // 3) Nothing resolvable → honest failure, no phantom step.
+        if (fx < 0) {
+            WarmerOverlay.flash(null, false)
+            Log.i(TAG, "mark: nothing under last tap")
+            return JSONObject().apply { put("ok", false); put("error", "no element under last tap") }
+        }
+
+        val name = if (varName.isNullOrBlank()) "field_${++fieldCounter}" else varName
         lastMarkAt = System.currentTimeMillis()
-        WarmerOverlay.flash(anchor ?: capAnchor)   // visual-only confirmation (no sound/vibration)
-        Log.i(TAG, "field marked var=$capVar at ($capX,$capY)")
-        return JSONObject().apply { put("ok", true); put("field", anchor ?: JSONObject.NULL); put("var", capVar ?: JSONObject.NULL); put("x", capX); put("y", capY) }
+
+        if (editable) {
+            // Text field → strip its focus tap + any keyboard taps, then capture the typed text.
+            for (i in steps.length() - 1 downTo 0) {
+                val s = steps.optJSONObject(i) ?: break
+                if (s.optString("type") != "tap") break
+                if (s.optInt("y", 0) > KEYBOARD_TOP_Y) { steps.remove(i); continue }
+                steps.remove(i); break
+            }
+            capturing = true; capX = fx; capY = fy; capAnchor = anchor; capVar = name
+            WarmerOverlay.flash(anchor ?: name, true)
+            Log.i(TAG, "input marked var=$name field=$anchor at ($fx,$fy)")
+            return JSONObject().apply { put("ok", true); put("kind", "input"); put("field", anchor ?: JSONObject.NULL); put("var", name); put("x", fx); put("y", fy) }
+        }
+
+        // Non-input element → promote the last tap into a named tap-target.
+        if (lastTapIdx >= 0) {
+            val s = steps.optJSONObject(lastTapIdx)
+            s.put("var", name); s.put("target", true)
+            anchor?.let { s.put("label", it) }
+        } else {
+            steps.put(JSONObject().apply {
+                put("type", "tap"); put("x", fx); put("y", fy); put("target", true); put("var", name)
+                anchor?.let { put("label", it) }; put("wait", 0)
+            })
+        }
+        WarmerOverlay.flash(anchor ?: name, true)
+        Log.i(TAG, "target marked var=$name label=$anchor at ($fx,$fy)")
+        return JSONObject().apply { put("ok", true); put("kind", "target"); put("field", anchor ?: JSONObject.NULL); put("var", name); put("x", fx); put("y", fy) }
     }
 
     /** Called from InputService on a completed pointer-up. */

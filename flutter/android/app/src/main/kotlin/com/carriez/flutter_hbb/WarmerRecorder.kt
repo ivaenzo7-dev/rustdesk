@@ -1,16 +1,17 @@
 package com.carriez.flutter_hbb
 
 /**
- * WarmerRecorder — on-device macro recorder for client self-service templates.
+ * WarmerRecorder — on-device macro recorder for client self-service templates (no ADB).
  *
- * No ADB: it observes the taps/swipes that RustDesk injects through InputService
- * (the same remote input the renter performs from the web client) and turns them
- * into a replayable template. Text fields are auto-detected (AccessibilityNodeInfo
- * .isEditable) and captured as `input` steps (the typed text is read from the a11y
- * tree, independent of how it was typed) so they can be parameterised later.
+ * Observes taps/swipes RustDesk injects through InputService and turns them into a
+ * replayable template. Text fields are handled by INLINE MARKING (Variant A):
+ * the client taps a field, then issues record_mark_field {var} — the recorder marks
+ * that field as an `input` step, suppresses the following keyboard taps, and captures
+ * the final text from the a11y tree (findFocus). A light auto-detect (isEditable)
+ * stays as a fallback for native fields the client didn't mark.
  *
- * Hooked from InputService.onMouseInput (LEFT_UP) and toggled via WarmerCommandExecutor
- * (record_start / record_stop). Recording is passive — it never blocks injection.
+ * Toggled via WarmerCommandExecutor: record_start / record_mark_field / record_stop.
+ * Hooked from InputService.onMouseInput (LEFT_UP). Passive — never blocks injection.
  */
 import android.accessibilityservice.AccessibilityService
 import android.graphics.Rect
@@ -22,53 +23,64 @@ import org.json.JSONObject
 
 object WarmerRecorder {
     private const val TAG = "WarmerRec"
+    private const val KEYBOARD_TOP_Y = 1400   // taps below this while capturing = typing (suppressed)
 
     @Volatile var recording: Boolean = false
         private set
 
     private val steps = JSONArray()
-    private var startedAt = 0L
     private var lastActionAt = 0L
 
-    // A field the user just focused; its text is flushed when the next structural
-    // action happens (so intermediate keyboard taps/keystrokes are ignored and we
-    // record the semantic result — the final text — instead).
-    private var pendingFieldX = -1
-    private var pendingFieldY = -1
-    private var pendingFieldAnchor: String? = null
+    // Field currently being captured (after a mark or an editable-tap). Text is read
+    // and the `input` step emitted when the next non-keyboard action happens.
+    private var capturing = false
+    private var capX = -1
+    private var capY = -1
+    private var capAnchor: String? = null
+    private var capVar: String? = null
 
     @Synchronized
     fun start() {
-        steps.length().let { while (steps.length() > 0) steps.remove(0) }
+        while (steps.length() > 0) steps.remove(0)
         recording = true
-        startedAt = System.currentTimeMillis()
-        lastActionAt = startedAt
-        pendingFieldX = -1; pendingFieldY = -1; pendingFieldAnchor = null
+        lastActionAt = System.currentTimeMillis()
+        capturing = false; capX = -1; capY = -1; capAnchor = null; capVar = null
         Log.i(TAG, "recording started")
     }
 
     @Synchronized
     fun stop(svc: AccessibilityService?): JSONObject {
-        if (svc != null) flushField(svc)   // capture any field left focused
+        if (svc != null && capturing) flushInput(svc)
         recording = false
-        val out = JSONObject().apply {
-            put("steps", cloneSteps())
-            put("count", steps.length())
-        }
+        val out = JSONObject().apply { put("steps", cloneSteps()); put("count", steps.length()) }
         Log.i(TAG, "recording stopped: ${steps.length()} steps")
         return out
     }
 
-    private fun cloneSteps(): JSONArray {
-        val a = JSONArray()
-        for (i in 0 until steps.length()) a.put(steps.get(i))
-        return a
-    }
-
-    private fun waitMs(now: Long): Long {
-        val d = now - lastActionAt
-        lastActionAt = now
-        return d.coerceIn(0, 8000)
+    /** Inline field marking (Variant A). Marks the currently-focused field as an input
+     *  step named [varName]; strips any keyboard taps already recorded for it. */
+    @Synchronized
+    fun markField(svc: AccessibilityService, varName: String?): JSONObject {
+        if (!recording) return JSONObject().apply { put("ok", false); put("error", "not recording") }
+        // Resolve the field: prefer the actually-focused input, else the last tap.
+        var fx = -1; var fy = -1; var anchor: String? = null
+        try {
+            val f = svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (f != null) { val r = Rect(); f.getBoundsInScreen(r); fx = r.centerX(); fy = r.centerY(); anchor = anchorOf(f); f.recycleSafe() }
+        } catch (_: Exception) {}
+        // Strip trailing keyboard-region taps + the field-focus tap already recorded.
+        for (i in steps.length() - 1 downTo 0) {
+            val s = steps.optJSONObject(i) ?: break
+            if (s.optString("type") == "tap") {
+                val ty = s.optInt("y", 0)
+                if (ty > KEYBOARD_TOP_Y) { steps.remove(i); continue }           // typed keyboard tap
+                if (fx < 0) { fx = s.optInt("x"); fy = ty; anchor = s.optString("label", null) }
+                steps.remove(i); break                                            // the field-focus tap
+            } else break
+        }
+        capturing = true; capX = fx; capY = fy; capAnchor = anchor; capVar = if (varName.isNullOrBlank()) null else varName
+        Log.i(TAG, "field marked var=$capVar at ($capX,$capY)")
+        return JSONObject().apply { put("ok", true); put("field", anchor ?: JSONObject.NULL); put("var", capVar ?: JSONObject.NULL); put("x", capX); put("y", capY) }
     }
 
     /** Called from InputService on a completed pointer-up. */
@@ -78,64 +90,58 @@ object WarmerRecorder {
         try {
             val now = System.currentTimeMillis()
             if (isTap) {
+                // While capturing a field, keyboard-area taps are the user typing → suppress.
+                if (capturing && y > KEYBOARD_TOP_Y) return
+                if (capturing) flushInput(svc)   // a tap outside the keyboard ends text entry
                 val node = nodeAt(svc, x, y)
                 val editable = node?.let { isEditable(it) } == true
-                if (editable) {
-                    // Focusing a text field: remember it; text captured on flush.
-                    flushField(svc)                       // flush a previous field, if any
-                    pendingFieldX = x; pendingFieldY = y
-                    pendingFieldAnchor = anchorOf(node)
-                    node?.recycleSafe()
-                    return
+                if (editable && !capturing) {     // auto-detect fallback: start capturing (unnamed)
+                    capturing = true; capX = x; capY = y; capAnchor = anchorOf(node); capVar = null
+                    node?.recycleSafe(); return
                 }
-                flushField(svc)                            // a non-field tap flushes the field first
-                val step = JSONObject().apply {
-                    put("type", "tap"); put("x", x); put("y", y)
-                    put("wait", waitMs(now))
+                steps.put(JSONObject().apply {
+                    put("type", "tap"); put("x", x); put("y", y); put("wait", waitMs(now))
                     anchorOf(node)?.let { put("label", it) }
-                }
-                steps.put(step)
+                })
                 node?.recycleSafe()
             } else {
-                flushField(svc)
+                if (capturing) flushInput(svc)
                 val dx = x - downX; val dy = y - downY
-                val step = if (Math.abs(dy) >= Math.abs(dx) && Math.abs(dy) >= 120) {
-                    JSONObject().apply { put("type", "scroll"); put("direction", if (dy < 0) "down" else "up"); put("wait", waitMs(now)) }
-                } else {
-                    JSONObject().apply { put("type", "swipe"); put("x0", downX); put("y0", downY); put("x1", x); put("y1", y); put("wait", waitMs(now)) }
-                }
-                steps.put(step)
+                steps.put(
+                    if (Math.abs(dy) >= Math.abs(dx) && Math.abs(dy) >= 100)
+                        JSONObject().apply { put("type", "scroll"); put("direction", if (dy < 0) "down" else "up"); put("wait", waitMs(now)) }
+                    else
+                        JSONObject().apply { put("type", "swipe"); put("x0", downX); put("y0", downY); put("x1", x); put("y1", y); put("wait", waitMs(now)) }
+                )
             }
         } catch (e: Exception) { Log.w(TAG, "onPointerUp: ${e.message}") }
     }
 
-    /** Emit an `input` step for the currently-focused field (text read from the tree). */
-    private fun flushField(svc: AccessibilityService) {
-        if (pendingFieldX < 0) return
+    private fun flushInput(svc: AccessibilityService) {
+        if (!capturing) return
         var text: String? = null
         try {
-            val focused = svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
-            focused?.let { it.refreshSafe(); text = it.text?.toString(); it.recycleSafe() }
-            if (text == null) { val n = nodeAt(svc, pendingFieldX, pendingFieldY); n?.let { it.refreshSafe(); text = it.text?.toString(); it.recycleSafe() } }
+            val f = svc.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            f?.let { it.refreshSafe(); text = it.text?.toString(); it.recycleSafe() }
+            if (text == null && capX >= 0) { nodeAt(svc, capX, capY)?.let { it.refreshSafe(); text = it.text?.toString(); it.recycleSafe() } }
         } catch (_: Exception) {}
-        val step = JSONObject().apply {
-            put("type", "input")
-            put("x", pendingFieldX); put("y", pendingFieldY)
-            pendingFieldAnchor?.let { put("field", it) }
+        steps.put(JSONObject().apply {
+            put("type", "input"); put("x", capX); put("y", capY)
+            capAnchor?.let { put("field", it) }
             put("text", text ?: "")
-            put("var", JSONObject.NULL)     // named later in the review UI
+            put("var", capVar ?: JSONObject.NULL)
             put("wait", waitMs(System.currentTimeMillis()))
-        }
-        steps.put(step)
-        pendingFieldX = -1; pendingFieldY = -1; pendingFieldAnchor = null
+        })
+        capturing = false; capX = -1; capY = -1; capAnchor = null; capVar = null
     }
 
-    // ── a11y helpers ──────────────────────────────────────────────────────────
+    private fun cloneSteps(): JSONArray { val a = JSONArray(); for (i in 0 until steps.length()) a.put(steps.get(i)); return a }
+    private fun waitMs(now: Long): Long { val d = now - lastActionAt; lastActionAt = now; return d.coerceIn(0, 8000) }
+
     private fun nodeAt(svc: AccessibilityService, x: Int, y: Int): AccessibilityNodeInfo? {
         val root = try { svc.rootInActiveWindow } catch (_: Exception) { null } ?: return null
         return deepest(root, x, y)
     }
-
     private fun deepest(node: AccessibilityNodeInfo, x: Int, y: Int): AccessibilityNodeInfo? {
         val r = Rect(); node.getBoundsInScreen(r)
         if (!r.contains(x, y)) return null
@@ -147,23 +153,16 @@ object WarmerRecorder {
         }
         return node
     }
-
-    private fun isEditable(n: AccessibilityNodeInfo): Boolean {
-        return try {
-            n.isEditable || (n.className?.toString()?.contains("EditText") == true)
-        } catch (_: Exception) { false }
-    }
-
+    private fun isEditable(n: AccessibilityNodeInfo): Boolean =
+        try { n.isEditable || (n.className?.toString()?.contains("EditText") == true) } catch (_: Exception) { false }
     private fun anchorOf(n: AccessibilityNodeInfo?): String? {
         if (n == null) return null
         return try {
             n.viewIdResourceName
                 ?: (if (Build.VERSION.SDK_INT >= 26) n.hintText?.toString() else null)
-                ?: n.contentDescription?.toString()
-                ?: n.text?.toString()
+                ?: n.contentDescription?.toString() ?: n.text?.toString()
         } catch (_: Exception) { null }
     }
-
     private fun AccessibilityNodeInfo.recycleSafe() { try { @Suppress("DEPRECATION") recycle() } catch (_: Exception) {} }
     private fun AccessibilityNodeInfo.refreshSafe() { try { refresh() } catch (_: Exception) {} }
 }

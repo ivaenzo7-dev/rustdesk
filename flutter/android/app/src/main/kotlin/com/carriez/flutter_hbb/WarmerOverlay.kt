@@ -1,16 +1,19 @@
 package com.carriez.flutter_hbb
 
 /**
- * WarmerOverlay — the on-screen "mark field" bubble shown while recording (Variant A UX).
+ * WarmerOverlay — on-screen, DRAGGABLE "mark field" bubble shown while recording (Variant A UX).
  *
- * An AccessibilityService can add a TYPE_ACCESSIBILITY_OVERLAY window without the
- * SYSTEM_ALERT_WINDOW permission. The client (driving via RustDesk) taps a text field,
- * then taps this bubble → WarmerRecorder marks the focused field. The recorder knows the
- * bubble's screen rect and does NOT record taps that land on it.
+ * Taps/drags arrive via RustDesk's InputService (not real view touches), so the recorder detects
+ * them by coordinates: a tap inside `rect` marks the focused field; a drag whose DOWN is inside
+ * `rect` repositions the bubble (WarmerRecorder calls moveTo). On a successful mark the recorder
+ * calls flash() for a VISUAL-ONLY confirmation — this is the host's phone, so no sound/vibration.
+ *
+ * An AccessibilityService can add a TYPE_ACCESSIBILITY_OVERLAY window without SYSTEM_ALERT_WINDOW.
  */
 import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.graphics.Color
+import android.graphics.PixelFormat
 import android.graphics.Rect
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
@@ -19,18 +22,21 @@ import android.os.Looper
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
-import android.graphics.PixelFormat
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
 
 object WarmerOverlay {
     private const val TAG = "WarmerOverlay"
+    private const val IDLE_TEXT = "●  Пометить поле"
+
     private val main = Handler(Looper.getMainLooper())
-    @Volatile private var view: View? = null
+    @Volatile private var view: TextView? = null
     @Volatile private var wm: WindowManager? = null
-    @Volatile var rect: Rect? = null          // bubble bounds on screen (recorder skips taps here)
+    @Volatile private var lp: WindowManager.LayoutParams? = null
+    @Volatile var rect: Rect? = null          // bubble bounds on screen (recorder tests taps/drags here)
         private set
+    private var revert: Runnable? = null
 
     fun show(svc: AccessibilityService) {
         main.post {
@@ -38,41 +44,83 @@ object WarmerOverlay {
             try {
                 val ctx: Context = svc
                 val label = TextView(ctx).apply {
-                    text = "●  Пометить поле"
+                    text = IDLE_TEXT
                     setTextColor(Color.WHITE)
                     setTextSize(TypedValue.COMPLEX_UNIT_SP, 15f)
-                    val pad = dp(ctx, 14); setPadding(pad + dp(ctx, 4), dp(ctx, 10), pad + dp(ctx, 4), dp(ctx, 10))
-                    background = GradientDrawable().apply { cornerRadius = dp(ctx, 24).toFloat(); setColor(Color.parseColor("#16a34a")) }
-                    elevation = dp(ctx, 6).toFloat()
+                    val padH = dp(ctx, 18); val padV = dp(ctx, 12)
+                    setPadding(padH, padV, padH, padV)
+                    background = bg("#16a34a", ctx)
+                    elevation = dp(ctx, 8).toFloat()
                 }
                 val type = if (Build.VERSION.SDK_INT >= 22)
                     WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
                 else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_SYSTEM_ALERT
-                val lp = WindowManager.LayoutParams(
+                val p = WindowManager.LayoutParams(
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     WindowManager.LayoutParams.WRAP_CONTENT,
                     type,
-                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,  // touchable (consumes the tap), just not focusable
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,  // touchable, not focusable
                     PixelFormat.TRANSLUCENT
-                ).apply { gravity = Gravity.END or Gravity.CENTER_VERTICAL; x = dp(ctx, 12); y = 0 }
-                val w = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                w.addView(label, lp); wm = w; view = label
-                label.post {
-                    val loc = IntArray(2); label.getLocationOnScreen(loc)
-                    rect = Rect(loc[0], loc[1], loc[0] + label.width, loc[1] + label.height)
-                    Log.i(TAG, "bubble shown at $rect")
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START      // absolute x,y so we can drag it
+                    val dm = ctx.resources.displayMetrics
+                    x = dm.widthPixels - dp(ctx, 230)
+                    y = (dm.heightPixels * 0.42).toInt()
                 }
+                val w = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                w.addView(label, p); wm = w; view = label; lp = p
+                label.post { updateRect() }
+                Log.i(TAG, "bubble shown")
             } catch (e: Exception) { Log.w(TAG, "show failed: ${e.message}") }
+        }
+    }
+
+    /** Reposition so the bubble's centre sits near (cx,cy) — called by the recorder on a drag. */
+    fun moveTo(svc: AccessibilityService, cx: Int, cy: Int) {
+        main.post {
+            val v = view ?: return@post; val p = lp ?: return@post; val w = wm ?: return@post
+            try {
+                val dm = v.context.resources.displayMetrics
+                p.x = (cx - v.width / 2).coerceIn(0, (dm.widthPixels - v.width).coerceAtLeast(0))
+                p.y = (cy - v.height / 2).coerceIn(0, (dm.heightPixels - v.height).coerceAtLeast(0))
+                w.updateViewLayout(v, p)
+                updateRect()
+                Log.i(TAG, "bubble moved to (${p.x},${p.y})")
+            } catch (e: Exception) { Log.w(TAG, "moveTo failed: ${e.message}") }
+        }
+    }
+
+    /** Visual-only confirmation that a field was marked (host phone: no sound, no vibration). */
+    fun flash(label: String?) {
+        main.post {
+            val v = view ?: return@post
+            try {
+                val short = label?.substringAfterLast('/')?.take(22)
+                v.text = if (short.isNullOrBlank()) "✓ помечено" else "✓ $short"
+                v.background = bg("#0f7a35", v.context)          // darker confirm-green pulse
+                revert?.let { main.removeCallbacks(it) }
+                val r = Runnable { view?.let { it.text = IDLE_TEXT; it.background = bg("#16a34a", it.context) } }
+                revert = r; main.postDelayed(r, 1100)
+            } catch (e: Exception) { Log.w(TAG, "flash failed: ${e.message}") }
         }
     }
 
     fun hide() {
         main.post {
+            revert?.let { main.removeCallbacks(it) }; revert = null
             try { view?.let { wm?.removeView(it) } } catch (_: Exception) {}
-            view = null; rect = null
+            view = null; rect = null; lp = null
         }
     }
 
-    private fun dp(ctx: Context, v: Int): Int =
-        (v * ctx.resources.displayMetrics.density).toInt()
+    private fun updateRect() {
+        val v = view ?: return
+        val loc = IntArray(2); v.getLocationOnScreen(loc)
+        rect = Rect(loc[0], loc[1], loc[0] + v.width, loc[1] + v.height)
+    }
+
+    private fun bg(color: String, ctx: Context) = GradientDrawable().apply {
+        cornerRadius = dp(ctx, 26).toFloat(); setColor(Color.parseColor(color))
+    }
+    private fun dp(ctx: Context, v: Int): Int = (v * ctx.resources.displayMetrics.density).toInt()
 }

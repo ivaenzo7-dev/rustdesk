@@ -24,6 +24,7 @@ import org.json.JSONObject
 object WarmerRecorder {
     private const val TAG = "WarmerRec"
     private const val KEYBOARD_TOP_Y = 1400   // taps below this while capturing = typing (suppressed)
+    private const val MARK_DEBOUNCE_MS = 500L // ignore repeat bubble taps within this window
 
     @Volatile var recording: Boolean = false
         private set
@@ -39,6 +40,7 @@ object WarmerRecorder {
     private var capAnchor: String? = null
     private var capVar: String? = null
     private var fieldCounter = 0
+    private var lastMarkAt = 0L
 
     @Synchronized
     fun start(svc: AccessibilityService) {
@@ -83,6 +85,8 @@ object WarmerRecorder {
             } else break
         }
         capturing = true; capX = fx; capY = fy; capAnchor = anchor; capVar = if (varName.isNullOrBlank()) "field_${++fieldCounter}" else varName
+        lastMarkAt = System.currentTimeMillis()
+        WarmerOverlay.flash(anchor ?: capAnchor)   // visual-only confirmation (no sound/vibration)
         Log.i(TAG, "field marked var=$capVar at ($capX,$capY)")
         return JSONObject().apply { put("ok", true); put("field", anchor ?: JSONObject.NULL); put("var", capVar ?: JSONObject.NULL); put("x", capX); put("y", capY) }
     }
@@ -93,7 +97,15 @@ object WarmerRecorder {
         if (!recording) return
         try {
             val now = System.currentTimeMillis()
-            if (isTap && WarmerOverlay.rect?.contains(x, y) == true) { markField(svc, null); return }
+            // Tap on the bubble → mark the focused field (debounced so one tap = one mark).
+            if (isTap && WarmerOverlay.rect?.contains(x, y) == true) {
+                if (now - lastMarkAt >= MARK_DEBOUNCE_MS) markField(svc, null)
+                return
+            }
+            // Drag whose DOWN began on the bubble → reposition it (never recorded as a swipe).
+            if (!isTap && WarmerOverlay.rect?.contains(downX, downY) == true) {
+                WarmerOverlay.moveTo(svc, x, y); return
+            }
             if (isTap) {
                 // While capturing a field, keyboard-area taps are the user typing → suppress.
                 if (capturing && y > KEYBOARD_TOP_Y) return

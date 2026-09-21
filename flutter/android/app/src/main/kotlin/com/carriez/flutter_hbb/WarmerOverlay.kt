@@ -19,7 +19,7 @@ import android.os.Looper
 import android.util.Log
 import android.util.TypedValue
 import android.view.Gravity
-import android.view.PixelFormat
+import android.graphics.PixelFormat
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView

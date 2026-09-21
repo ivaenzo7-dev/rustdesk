@@ -38,13 +38,16 @@ object WarmerRecorder {
     private var capY = -1
     private var capAnchor: String? = null
     private var capVar: String? = null
+    private var fieldCounter = 0
 
     @Synchronized
-    fun start() {
+    fun start(svc: AccessibilityService) {
         while (steps.length() > 0) steps.remove(0)
         recording = true
         lastActionAt = System.currentTimeMillis()
         capturing = false; capX = -1; capY = -1; capAnchor = null; capVar = null
+        fieldCounter = 0
+        WarmerOverlay.show(svc)
         Log.i(TAG, "recording started")
     }
 
@@ -52,6 +55,7 @@ object WarmerRecorder {
     fun stop(svc: AccessibilityService?): JSONObject {
         if (svc != null && capturing) flushInput(svc)
         recording = false
+        WarmerOverlay.hide()
         val out = JSONObject().apply { put("steps", cloneSteps()); put("count", steps.length()) }
         Log.i(TAG, "recording stopped: ${steps.length()} steps")
         return out
@@ -78,7 +82,7 @@ object WarmerRecorder {
                 steps.remove(i); break                                            // the field-focus tap
             } else break
         }
-        capturing = true; capX = fx; capY = fy; capAnchor = anchor; capVar = if (varName.isNullOrBlank()) null else varName
+        capturing = true; capX = fx; capY = fy; capAnchor = anchor; capVar = if (varName.isNullOrBlank()) "field_${++fieldCounter}" else varName
         Log.i(TAG, "field marked var=$capVar at ($capX,$capY)")
         return JSONObject().apply { put("ok", true); put("field", anchor ?: JSONObject.NULL); put("var", capVar ?: JSONObject.NULL); put("x", capX); put("y", capY) }
     }
@@ -89,6 +93,7 @@ object WarmerRecorder {
         if (!recording) return
         try {
             val now = System.currentTimeMillis()
+            if (isTap && WarmerOverlay.rect?.contains(x, y) == true) { markField(svc, null); return }
             if (isTap) {
                 // While capturing a field, keyboard-area taps are the user typing → suppress.
                 if (capturing && y > KEYBOARD_TOP_Y) return

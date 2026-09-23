@@ -503,7 +503,19 @@ class MainService : Service() {
             return true
         }
         if (mediaProjection == null) {
-            Log.w(logTag, "startCapture fail,mediaProjection is null")
+            // Проекции нет — её мог отобрать Esper, пока мы простаивали. В этом
+            // случае onMediaProjectionLost() перезапрос не делает: сессии не было,
+            // просить проекцию, пока её держит другое приложение, бессмысленно.
+            // Просим здесь, в момент реального подключения. Раньше тут стоял
+            // голый `return false`, и проекцию не запрашивал никто — клиент
+            // вис в «ожидании изображения» навсегда.
+            // Диалог не появится: на парке при провижининге прописан
+            // `appops set com.carriez.flutter_hbb PROJECT_MEDIA allow`.
+            Log.w(logTag, "startCapture: mediaProjection is null — re-requesting it")
+            pendingCaptureRestart = true
+            if (allowReacquire()) {
+                requestMediaProjection()
+            }
             return false
         }
         

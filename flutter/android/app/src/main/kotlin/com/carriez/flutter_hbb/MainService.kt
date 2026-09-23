@@ -230,6 +230,9 @@ class MainService : Service() {
         @Volatile var instance: MainService? = null
         // Track whether a remote session is currently active
         var isSessionActive: Boolean = false
+
+        private const val REACQUIRE_WINDOW_MS = 60_000L
+        private const val REACQUIRE_MAX_ATTEMPTS = 3
     }
 
     private val logTag = "LOG_SERVICE"
@@ -256,6 +259,32 @@ class MainService : Service() {
 
     // video
     private var mediaProjection: MediaProjection? = null
+
+    // Система зовёт onStop(), когда проекцию отбирает другое приложение —
+    // например Esper, когда на телефоне открывают его удалённое управление.
+    // Без этого колбэка мы об отзыве не узнаём вообще: на Android 14+
+    // virtualDisplay переиспользуется (reuseVirtualDisplay), а setSurface()
+    // на дисплее мёртвой проекции НЕ бросает SecurityException — он просто
+    // молча не отдаёт кадры, и catch в createOrSetVirtualDisplay не срабатывает.
+    // Результат — вечное «ожидание изображения» на клиенте.
+    private val mediaProjectionCallback = object : MediaProjection.Callback() {
+        override fun onStop() {
+            Log.w(logTag, "MediaProjection revoked by system (another app took it over)")
+            onMediaProjectionLost()
+        }
+    }
+
+    // Захват шёл в момент отзыва — поднять его обратно сразу после
+    // повторного получения проекции.
+    @Volatile
+    private var pendingCaptureRestart = false
+
+    // Защита от пинг-понга: если другое приложение (тот же Esper) удерживает
+    // проекцию и отбирает её сразу после каждого нашего перезапроса, без
+    // ограничителя мы будем дёргать систему бесконечно. Разрешаем не больше
+    // REACQUIRE_MAX_ATTEMPTS попыток в окне REACQUIRE_WINDOW_MS.
+    private var reacquireWindowStart = 0L
+    private var reacquireAttempts = 0
     private var surface: Surface? = null
     private val sendVP9Thread = Executors.newSingleThreadExecutor()
     private var videoEncoder: MediaCodec? = null
@@ -394,8 +423,18 @@ class MainService : Service() {
             intent.getParcelableExtra<Intent>(EXT_MEDIA_PROJECTION_RES_INTENT)?.let {
                 mediaProjection =
                     mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, it)
+                // Регистрируем ДО createVirtualDisplay: на API 34+ это требование
+                // платформы, и только так мы узнаём об отзыве проекции.
+                mediaProjection?.registerCallback(
+                    mediaProjectionCallback, Handler(Looper.getMainLooper())
+                )
                 checkMediaPermission()
                 _isReady = true
+                if (pendingCaptureRestart) {
+                    pendingCaptureRestart = false
+                    Log.d(logTag, "media projection re-acquired, restarting capture")
+                    startCapture()
+                }
             } ?: let {
                 Log.d(logTag, "getParcelableExtra intent null, invoke requestMediaProjection")
                 requestMediaProjection()
@@ -490,6 +529,56 @@ class MainService : Service() {
         return true
     }
 
+    // Проекцию отобрали. Роняем весь конвейер: переиспользуемый virtualDisplay
+    // привязан к уже мёртвой проекции, и если его не освободить, следующий
+    // startCapture() снова уйдёт в ветку setSurface() и снова молча не даст кадров.
+    @Synchronized
+    private fun onMediaProjectionLost() {
+        pendingCaptureRestart = _isStart || isSessionActive
+
+        stopCapture()
+        virtualDisplay?.release()
+        virtualDisplay = null
+        try {
+            mediaProjection?.unregisterCallback(mediaProjectionCallback)
+        } catch (e: Throwable) {
+            Log.w(logTag, "unregisterCallback failed: ${e.message}")
+        }
+        mediaProjection = null
+        _isReady = false
+        checkMediaPermission()
+
+        Handler(Looper.getMainLooper()).post {
+            MainActivity.flutterMethodChannel?.invokeMethod("on_media_projection_canceled", null)
+        }
+
+        // Забираем проекцию обратно. На парке при провижининге прописан
+        // `appops set com.carriez.flutter_hbb PROJECT_MEDIA allow`, поэтому
+        // системный диалог не показывается и восстановление идёт молча.
+        if (pendingCaptureRestart && allowReacquire()) {
+            Log.d(logTag, "re-requesting media projection after takeover")
+            requestMediaProjection()
+        }
+    }
+
+    private fun allowReacquire(): Boolean {
+        val now = SystemClock.elapsedRealtime()
+        if (now - reacquireWindowStart > REACQUIRE_WINDOW_MS) {
+            reacquireWindowStart = now
+            reacquireAttempts = 0
+        }
+        reacquireAttempts++
+        if (reacquireAttempts > REACQUIRE_MAX_ATTEMPTS) {
+            Log.w(
+                logTag,
+                "media projection re-acquire suppressed: $reacquireAttempts attempts " +
+                    "within ${REACQUIRE_WINDOW_MS}ms — another app is holding it"
+            )
+            return false
+        }
+        return true
+    }
+
     @Synchronized
     fun stopCapture() {
         Log.d(logTag, "Stop Capture")
@@ -543,6 +632,11 @@ class MainService : Service() {
             virtualDisplay = null
         }
 
+        try {
+            mediaProjection?.unregisterCallback(mediaProjectionCallback)
+        } catch (e: Throwable) {
+            Log.w(logTag, "unregisterCallback failed: ${e.message}")
+        }
         mediaProjection = null
         checkMediaPermission()
         instance = null

@@ -234,6 +234,7 @@ class MainService : Service() {
         private const val REACQUIRE_WINDOW_MS = 60_000L
         private const val REACQUIRE_MAX_ATTEMPTS = 3
         private const val PROJECTION_REQUEST_TIMEOUT_MS = 10_000L
+        private const val MIN_REACQUIRE_GAP_MS = 2_000L
     }
 
     private val logTag = "LOG_SERVICE"
@@ -306,6 +307,14 @@ class MainService : Service() {
     // лишний токен, который инвалидирует первый.
     @Volatile
     private var projectionRequestInFlight = false
+
+    // Когда мы последний раз успешно получили проекцию. На Android 14 запрос
+    // новой проекции гасит предыдущую, причём система останавливает и только
+    // что созданную — поэтому просить её сразу после успеха самоубийственно:
+    // получается каскад acquire -> stop -> acquire каждые ~150 мс, который
+    // заканчивается тем, что проекции нет ни у кого.
+    @Volatile
+    private var lastProjectionAcquiredAt = 0L
 
     // Захват шёл в момент отзыва — поднять его обратно сразу после
     // повторного получения проекции.
@@ -455,6 +464,7 @@ class MainService : Service() {
 
             intent.getParcelableExtra<Intent>(EXT_MEDIA_PROJECTION_RES_INTENT)?.let {
                 projectionRequestInFlight = false
+                lastProjectionAcquiredAt = SystemClock.elapsedRealtime()
                 mediaProjection =
                     mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, it)
                 // Регистрируем ДО createVirtualDisplay: на API 34+ это требование
@@ -558,7 +568,18 @@ class MainService : Service() {
             // `appops set com.carriez.flutter_hbb PROJECT_MEDIA allow`.
             Log.w(logTag, "startCapture: mediaProjection is null — re-requesting it")
             pendingCaptureRestart = true
-            if (allowReacquire()) {
+            val sinceAcquire = SystemClock.elapsedRealtime() - lastProjectionAcquiredAt
+            if (sinceAcquire < MIN_REACQUIRE_GAP_MS) {
+                // Слишком рано после предыдущего успеха — запрос сейчас убил бы
+                // только что выданный токен. Ждём и пробуем один раз.
+                val wait = MIN_REACQUIRE_GAP_MS - sinceAcquire
+                Log.d(logTag, "too soon after last acquire (${sinceAcquire}ms), retrying in ${wait}ms")
+                Handler(Looper.getMainLooper()).postDelayed({
+                    if (mediaProjection == null && allowReacquire()) {
+                        requestMediaProjection()
+                    }
+                }, wait)
+            } else if (allowReacquire()) {
                 requestMediaProjection()
             }
             return false
@@ -605,12 +626,21 @@ class MainService : Service() {
             MainActivity.flutterMethodChannel?.invokeMethod("on_media_projection_canceled", null)
         }
 
-        // Забираем проекцию обратно. На парке при провижининге прописан
-        // `appops set com.carriez.flutter_hbb PROJECT_MEDIA allow`, поэтому
-        // системный диалог не показывается и восстановление идёт молча.
-        if (pendingCaptureRestart && allowReacquire()) {
-            Log.d(logTag, "re-requesting media projection after takeover")
-            requestMediaProjection()
+        // НЕ перезапрашиваем проекцию немедленно. Именно это и создавало каскад:
+        // новый токен гасил сам себя, и так до ограничителя. Обычно проекция
+        // берётся лениво в startCapture(). Но если сессия была живой, ленивый
+        // путь её не вернёт — startCapture() больше никто не вызовет, и картинка
+        // замрёт до переподключения. Поэтому ровно одна отложенная попытка,
+        // через паузу, достаточную чтобы система разобрала прежний токен.
+        if (pendingCaptureRestart) {
+            Handler(Looper.getMainLooper()).postDelayed({
+                if (mediaProjection == null && allowReacquire()) {
+                    Log.d(logTag, "delayed re-acquire after mid-session projection loss")
+                    requestMediaProjection()
+                }
+            }, MIN_REACQUIRE_GAP_MS)
+        } else {
+            Log.d(logTag, "projection lost; will re-acquire lazily on next capture start")
         }
     }
 

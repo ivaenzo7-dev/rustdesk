@@ -27,6 +27,13 @@ data class XmlRenderConfig(
     val frameRate: Int = 15,            // 5/10/15/30
     val maxDepth: Int = 20,
     val skipInvisible: Boolean = true,
+
+    // ── Поведение ──
+    // Не рисовать окно экранной клавиатуры: как каркас оно нечитаемо, а текст
+    // с десктопа идёт мимо него напрямую в поле ввода.
+    val hideKeyboard: Boolean = true,
+    // Подгонять размер шрифта под бокс, прежде чем переносить и обрезать.
+    val autoFitText: Boolean = true,
 ) {
     enum class ColorScheme { DARK, LIGHT, HIGH_CONTRAST }
 
@@ -36,17 +43,23 @@ data class XmlRenderConfig(
         val alpha = elementOpacity
         return when (colorScheme) {
             ColorScheme.DARK -> when {
+                // Поле ввода проверяем ПЕРВЫМ. Раньше EditText попадал в ветку
+                // isClickable && isFocused и заливался почти непрозрачным синим —
+                // поле превращалось в сплошной прямоугольник, на котором не было
+                // видно набранного текста. Держим заливку полупрозрачной.
+                isEditable && isFocused  -> Color.argb(alpha / 2, 25, 90, 40)
+                isEditable               -> Color.argb(alpha / 3, 20, 60, 20)
                 isClickable && isFocused -> Color.argb((alpha * 1.2f).toInt().coerceAtMost(255), 30, 120, 200)
                 isClickable              -> Color.argb(alpha, 40, 40, 60)
-                isEditable               -> Color.argb(alpha, 20, 60, 20)
                 isCheckable              -> Color.argb(alpha, 60, 40, 80)
                 depth % 2 == 0           -> Color.argb(alpha / 3, 30, 30, 40)
                 else                     -> Color.argb(alpha / 4, 50, 50, 70)
             }
             ColorScheme.LIGHT -> when {
+                isEditable && isFocused  -> Color.argb(alpha / 2, 190, 245, 200)
+                isEditable               -> Color.argb(alpha / 3, 200, 240, 200)
                 isClickable && isFocused -> Color.argb(alpha, 100, 180, 255)
                 isClickable              -> Color.argb(alpha, 200, 220, 255)
-                isEditable               -> Color.argb(alpha, 200, 240, 200)
                 isCheckable              -> Color.argb(alpha, 230, 200, 255)
                 depth % 2 == 0           -> Color.argb(alpha / 3, 240, 240, 245)
                 else                     -> Color.argb(alpha / 4, 220, 220, 230)
@@ -97,6 +110,8 @@ data class XmlRenderConfig(
         put("frameRate", frameRate)
         put("maxDepth", maxDepth)
         put("skipInvisible", skipInvisible)
+        put("hideKeyboard", hideKeyboard)
+        put("autoFitText", autoFitText)
     }
 
     companion object {
@@ -113,6 +128,8 @@ data class XmlRenderConfig(
             frameRate             = json.optInt("frameRate", 15),
             maxDepth              = json.optInt("maxDepth", 20),
             skipInvisible         = json.optBoolean("skipInvisible", true),
+            hideKeyboard          = json.optBoolean("hideKeyboard", true),
+            autoFitText           = json.optBoolean("autoFitText", true),
         )
     }
 }

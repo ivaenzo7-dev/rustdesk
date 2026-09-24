@@ -15,6 +15,7 @@ import android.text.StaticLayout
 import android.text.TextPaint
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
+import android.view.accessibility.AccessibilityWindowInfo
 import ffi.FFI
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
@@ -138,6 +139,17 @@ object XmlCapture {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 val windows = service.getWindowsList().sortedBy { it.layer }
                 for (window in windows) {
+                    // Экранная клавиатура как каркас бесполезна: клавиши Samsung не
+                    // помечены clickable (фон почти прозрачный), а Shift/Backspace/пробел
+                    // вообще без текста — на их месте пустота. При этом печатать её не
+                    // нужно: текст с десктопа идёт напрямую через
+                    // InputService.onKeyEvent -> InputConnection.commitText/sendKeyEvent.
+                    // Прячем ТОЛЬКО из отрисовки — в системе IME остаётся открытой,
+                    // иначе getCurrentInputConnection() отвалится и ввод сломается.
+                    if (XmlRenderConfigManager.current.hideKeyboard &&
+                        window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
+                        continue
+                    }
                     val root = window.root ?: continue
                     renderNode(canvas, root)
                     root.recycle()
@@ -292,7 +304,10 @@ object XmlCapture {
                             rectF
                         }
                         val textSize = getNodeTextSize(node, cfg.textSize / scale)
-                        drawNodeText(canvas, displayText, textBounds, textSize, cfg.textColor())
+                        drawNodeText(
+                            canvas, displayText, textBounds, textSize, cfg.textColor(),
+                            centerHorizontally = node.isClickable
+                        )
                     }
                 }
             }
@@ -549,13 +564,45 @@ object XmlCapture {
      * Рисует текст внутри bounds ноды с правильным переносом строк и вертикальным центрированием.
      * Использует StaticLayout для многострочности.
      */
+    // Минимум, до которого разрешено ужимать шрифт при автоподборе.
+    private const val MIN_TEXT_SCALE = 0.55f
+    private const val LINE_SPACING = 1.1f
+
+    private fun buildTextLayout(
+        text: String, width: Int, size: Float,
+        align: Layout.Alignment, availableHeight: Float
+    ): StaticLayout {
+        textPaint.textSize = size
+        // maxLines считаем от реальной высоты бокса. Раньше стоял Int.MAX_VALUE,
+        // из-за чего setEllipsize(END) не работал вовсе: текст переносился на
+        // строку, которая потом просто срезалась clipRect — получался обрубок
+        // без многоточия («Conditions of », «Hel», «© … or its»).
+        val lineHeight = textPaint.fontSpacing * LINE_SPACING
+        val maxLines = kotlin.math.max(1, kotlin.math.floor(availableHeight / lineHeight).toInt())
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            StaticLayout.Builder
+                .obtain(text, 0, text.length, textPaint, width)
+                .setAlignment(align)
+                .setLineSpacing(0f, LINE_SPACING)
+                .setIncludePad(false)
+                .setMaxLines(maxLines)
+                .setEllipsize(android.text.TextUtils.TruncateAt.END)
+                .build()
+        } else {
+            @Suppress("DEPRECATION")
+            StaticLayout(text, textPaint, width, align, LINE_SPACING, 0f, false)
+        }
+    }
+
     private fun drawNodeText(
         canvas: Canvas,
         text: String,
         nodeBounds: RectF,
         textSize: Float,
-        textColor: Int
+        textColor: Int,
+        centerHorizontally: Boolean = false
     ) {
+        val cfg = XmlRenderConfigManager.current
         val padding = textSize * 0.2f  // отступ пропорционален размеру текста
         val availableWidth = (nodeBounds.width() - padding * 2).toInt()
         val availableHeight = nodeBounds.height() - padding * 2
@@ -563,26 +610,24 @@ object XmlCapture {
         if (availableWidth <= 0 || availableHeight <= 0) return
 
         textPaint.color    = textColor
-        textPaint.textSize = textSize
         textPaint.isAntiAlias = true
 
-        // StaticLayout — правильный перенос строк с соблюдением ширины
-        val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            StaticLayout.Builder
-                .obtain(text, 0, text.length, textPaint, availableWidth)
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL)
-                .setLineSpacing(0f, 1.1f)   // небольшой межстрочный интервал
-                .setIncludePad(false)
-                .setMaxLines(Int.MAX_VALUE)
-                .setEllipsize(android.text.TextUtils.TruncateAt.END)
-                .build()
-        } else {
-            @Suppress("DEPRECATION")
-            StaticLayout(
-                text, textPaint, availableWidth,
-                Layout.Alignment.ALIGN_NORMAL,
-                1.1f, 0f, false
-            )
+        // Подписи кнопок на экране стоят по центру — при ALIGN_NORMAL они
+        // уезжали в левый верхний угол («Submit» в углу широкой кнопки).
+        val align = if (centerHorizontally) Layout.Alignment.ALIGN_CENTER
+                    else Layout.Alignment.ALIGN_NORMAL
+
+        var size = textSize
+        var layout = buildTextLayout(text, availableWidth, size, align, availableHeight)
+
+        // Сначала пробуем ужать шрифт, и только если не помогло — обрезаем.
+        // Так «Conditions of Use» влезает целиком вместо «Conditions of ».
+        if (cfg.autoFitText) {
+            val minSize = textSize * MIN_TEXT_SCALE
+            while (layout.height > availableHeight && size > minSize) {
+                size = (size * 0.85f).coerceAtLeast(minSize)
+                layout = buildTextLayout(text, availableWidth, size, align, availableHeight)
+            }
         }
 
         val textHeight = layout.height.toFloat()

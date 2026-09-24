@@ -303,6 +303,28 @@ class MainService : Service() {
         }
     }
 
+    // Отдаём проекцию системе, а не просто теряем ссылку.
+    //
+    // Без stop() каждый getMediaProjection() оставлял живого для системы сироту:
+    // объект мы забывали, но регистрация за нашим uid никуда не девалась. Android
+    // гасит предыдущую проекцию, когда выдаёт новую, и при накопленных сиротах
+    // волна гашения задевала только что выданную — она умирала через ~6 мс после
+    // createVirtualDisplay. В логе это видно как пары `Dispatch stop to 1
+    // callbacks` (живая) и `to 0 callbacks` (сирота). После этого приложение не
+    // могло удержать проекцию вообще, и лечил только перезапуск процесса.
+    //
+    // Колбэк снимаем ДО stop(), иначе stop() сам вызовет onStop() и мы уйдём в
+    // onMediaProjectionLost() на проекции, которую сносим намеренно.
+    private fun releaseProjection() {
+        unregisterProjectionCallback()
+        try {
+            mediaProjection?.stop()
+        } catch (e: Throwable) {
+            Log.w(logTag, "mediaProjection.stop() failed: ${e.message}")
+        }
+        mediaProjection = null
+    }
+
     // Запрос проекции уже в полёте — второй параллельный запрос только порождает
     // лишний токен, который инвалидирует первый.
     @Volatile
@@ -617,8 +639,7 @@ class MainService : Service() {
         stopCapture()
         virtualDisplay?.release()
         virtualDisplay = null
-        unregisterProjectionCallback()
-        mediaProjection = null
+        releaseProjection()
         _isReady = false
         checkMediaPermission()
 
@@ -715,8 +736,7 @@ class MainService : Service() {
             virtualDisplay = null
         }
 
-        unregisterProjectionCallback()
-        mediaProjection = null
+        releaseProjection()
         checkMediaPermission()
         instance = null
         stopForeground(true)

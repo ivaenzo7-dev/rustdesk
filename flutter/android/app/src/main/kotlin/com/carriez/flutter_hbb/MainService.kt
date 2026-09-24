@@ -233,6 +233,7 @@ class MainService : Service() {
 
         private const val REACQUIRE_WINDOW_MS = 60_000L
         private const val REACQUIRE_MAX_ATTEMPTS = 3
+        private const val PROJECTION_REQUEST_TIMEOUT_MS = 10_000L
     }
 
     private val logTag = "LOG_SERVICE"
@@ -260,19 +261,51 @@ class MainService : Service() {
     // video
     private var mediaProjection: MediaProjection? = null
 
-    // Система зовёт onStop(), когда проекцию отбирает другое приложение —
-    // например Esper, когда на телефоне открывают его удалённое управление.
-    // Без этого колбэка мы об отзыве не узнаём вообще: на Android 14+
-    // virtualDisplay переиспользуется (reuseVirtualDisplay), а setSurface()
-    // на дисплее мёртвой проекции НЕ бросает SecurityException — он просто
-    // молча не отдаёт кадры, и catch в createOrSetVirtualDisplay не срабатывает.
-    // Результат — вечное «ожидание изображения» на клиенте.
-    private val mediaProjectionCallback = object : MediaProjection.Callback() {
-        override fun onStop() {
-            Log.w(logTag, "MediaProjection revoked by system (another app took it over)")
-            onMediaProjectionLost()
+    // Колбэк отзыва проекции. Нужен, потому что иначе мы об отзыве не узнаём
+    // вообще: на Android 14+ virtualDisplay переиспользуется
+    // (reuseVirtualDisplay), а setSurface() на дисплее мёртвой проекции НЕ
+    // бросает SecurityException — он просто молча не отдаёт кадры, и catch в
+    // createOrSetVirtualDisplay не срабатывает. Результат — вечное «ожидание
+    // изображения» на клиенте.
+    //
+    // ВАЖНО: колбэк создаётся ЗАНОВО на каждую проекцию и помнит именно свою.
+    // Получение новой проекции инвалидирует предыдущую, и её onStop() прилетает
+    // с задержкой в десятки миллисекунд — уже после того, как мы подписались на
+    // новую. С одним общим колбэком такой запоздавший onStop() сносил ЖИВУЮ
+    // проекцию и запрашивал следующую: получался самоподдерживающийся цикл
+    // acquire -> stale onStop -> teardown -> acquire, пока не срабатывал
+    // ограничитель, после чего проекции не оставалось ни у кого.
+    private var mediaProjectionCallback: MediaProjection.Callback? = null
+
+    private fun registerProjectionCallback(mp: MediaProjection) {
+        val cb = object : MediaProjection.Callback() {
+            override fun onStop() {
+                if (mediaProjection !== mp) {
+                    Log.d(logTag, "stale MediaProjection.onStop() ignored")
+                    return
+                }
+                Log.w(logTag, "MediaProjection revoked by system")
+                onMediaProjectionLost()
+            }
+        }
+        mediaProjectionCallback = cb
+        mp.registerCallback(cb, Handler(Looper.getMainLooper()))
+    }
+
+    private fun unregisterProjectionCallback() {
+        val cb = mediaProjectionCallback ?: return
+        mediaProjectionCallback = null
+        try {
+            mediaProjection?.unregisterCallback(cb)
+        } catch (e: Throwable) {
+            Log.w(logTag, "unregisterCallback failed: ${e.message}")
         }
     }
+
+    // Запрос проекции уже в полёте — второй параллельный запрос только порождает
+    // лишний токен, который инвалидирует первый.
+    @Volatile
+    private var projectionRequestInFlight = false
 
     // Захват шёл в момент отзыва — поднять его обратно сразу после
     // повторного получения проекции.
@@ -421,13 +454,12 @@ class MainService : Service() {
                 getSystemService(MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
             intent.getParcelableExtra<Intent>(EXT_MEDIA_PROJECTION_RES_INTENT)?.let {
+                projectionRequestInFlight = false
                 mediaProjection =
                     mediaProjectionManager.getMediaProjection(Activity.RESULT_OK, it)
                 // Регистрируем ДО createVirtualDisplay: на API 34+ это требование
                 // платформы, и только так мы узнаём об отзыве проекции.
-                mediaProjection?.registerCallback(
-                    mediaProjectionCallback, Handler(Looper.getMainLooper())
-                )
+                mediaProjection?.let { mp -> registerProjectionCallback(mp) }
                 checkMediaPermission()
                 _isReady = true
                 if (pendingCaptureRestart) {
@@ -449,6 +481,19 @@ class MainService : Service() {
     }
 
     private fun requestMediaProjection() {
+        if (projectionRequestInFlight) {
+            Log.d(logTag, "media projection request already in flight, skipping")
+            return
+        }
+        projectionRequestInFlight = true
+        // Страховка: если результат так и не придёт (Activity не поднялась,
+        // запрос отклонён), флаг не должен запереть все будущие запросы.
+        Handler(Looper.getMainLooper()).postDelayed({
+            if (projectionRequestInFlight) {
+                Log.w(logTag, "media projection request timed out, clearing in-flight flag")
+                projectionRequestInFlight = false
+            }
+        }, PROJECTION_REQUEST_TIMEOUT_MS)
         val intent = Intent(this, PermissionRequestTransparentActivity::class.java).apply {
             action = ACT_REQUEST_MEDIA_PROJECTION
             flags = Intent.FLAG_ACTIVITY_NEW_TASK
@@ -551,11 +596,7 @@ class MainService : Service() {
         stopCapture()
         virtualDisplay?.release()
         virtualDisplay = null
-        try {
-            mediaProjection?.unregisterCallback(mediaProjectionCallback)
-        } catch (e: Throwable) {
-            Log.w(logTag, "unregisterCallback failed: ${e.message}")
-        }
+        unregisterProjectionCallback()
         mediaProjection = null
         _isReady = false
         checkMediaPermission()
@@ -644,11 +685,7 @@ class MainService : Service() {
             virtualDisplay = null
         }
 
-        try {
-            mediaProjection?.unregisterCallback(mediaProjectionCallback)
-        } catch (e: Throwable) {
-            Log.w(logTag, "unregisterCallback failed: ${e.message}")
-        }
+        unregisterProjectionCallback()
         mediaProjection = null
         checkMediaPermission()
         instance = null

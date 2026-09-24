@@ -329,6 +329,7 @@ class _PermissionCheckerState extends State<PermissionChecker> {
   /// 'mp' = MediaProjection  |  'xml' = XML/Accessibility capture
   String _captureMethod = 'mp';
   bool _captureMethodLoading = false;
+  String? _pendingCaptureMethod;
 
   @override
   void initState() {
@@ -346,7 +347,12 @@ class _PermissionCheckerState extends State<PermissionChecker> {
 
   Future<void> _setCaptureMethod(String method) async {
     if (_captureMethodLoading || _captureMethod == method) return;
-    setState(() => _captureMethodLoading = true);
+    // Запоминаем, КУДА переключаемся: с тремя режимами вычислить это из
+    // текущего значения уже нельзя, а спиннер нужен только на нажатом чипе.
+    setState(() {
+      _captureMethodLoading = true;
+      _pendingCaptureMethod = method;
+    });
     try {
       final serverModel =
           Provider.of<ServerModel>(context, listen: false);
@@ -355,14 +361,18 @@ class _PermissionCheckerState extends State<PermissionChecker> {
         await serverModel.switchCaptureMethod(method);
       } else {
         // Сервис не запущен — просто сохраняем выбор
-        await _captureChannel.invokeMethod(
-            method == 'xml' ? 'setXmlCapture' : 'setMediaProjection');
+        await _captureChannel.invokeMethod(captureChannelMethod(method));
       }
       if (mounted) setState(() => _captureMethod = method);
     } catch (e) {
       debugPrint('setCaptureMethod error: $e');
     } finally {
-      if (mounted) setState(() => _captureMethodLoading = false);
+      if (mounted) {
+        setState(() {
+          _captureMethodLoading = false;
+          _pendingCaptureMethod = null;
+        });
+      }
     }
   }
 
@@ -443,6 +453,9 @@ class _PermissionCheckerState extends State<PermissionChecker> {
   Widget _buildCaptureMethodSelector(BuildContext context) {
     final theme = Theme.of(context);
     final isXml = _captureMethod == 'xml';
+    final isShot = _captureMethod == 'shot';
+    // Оба не-MP режима работают через AccessibilityService.
+    final needsAccessibility = isXml || isShot;
 
     return Padding(
       padding: const EdgeInsets.only(left: 4, bottom: 6, top: 2),
@@ -454,26 +467,35 @@ class _PermissionCheckerState extends State<PermissionChecker> {
             style: theme.textTheme.bodySmall
                 ?.copyWith(color: MyTheme.darkGray, fontWeight: FontWeight.w600),
           ).marginOnly(bottom: 6),
-          Row(
+          // Wrap, а не Row: три чипа в строку не помещаются на узких экранах.
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
             children: [
               _CaptureChip(
                 label: 'MediaProjection',
                 icon: Icons.cast_connected,
-                selected: !isXml,
-                loading: _captureMethodLoading && isXml,
+                selected: _captureMethod == 'mp',
+                loading: _pendingCaptureMethod == 'mp',
                 onTap: () => _setCaptureMethod('mp'),
               ),
-              const SizedBox(width: 8),
               _CaptureChip(
                 label: 'XML Capture',
                 icon: Icons.account_tree_outlined,
                 selected: isXml,
-                loading: _captureMethodLoading && !isXml,
+                loading: _pendingCaptureMethod == 'xml',
                 onTap: () => _setCaptureMethod('xml'),
+              ),
+              _CaptureChip(
+                label: 'Screenshot',
+                icon: Icons.photo_camera_outlined,
+                selected: isShot,
+                loading: _pendingCaptureMethod == 'shot',
+                onTap: () => _setCaptureMethod('shot'),
               ),
             ],
           ),
-          if (isXml)
+          if (needsAccessibility)
             Row(children: [
               const Icon(Icons.info_outline, size: 13, color: MyTheme.darkGray)
                   .marginOnly(right: 4),

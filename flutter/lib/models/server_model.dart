@@ -481,8 +481,7 @@ class ServerModel with ChangeNotifier {
 
   /// Запуск с явным выбором метода — вызывается из двух кнопок на UI.
   Future<void> startServiceWithMethod(String method) async {
-    await _captureChannel.invokeMethod(
-        method == 'xml' ? 'setXmlCapture' : 'setMediaProjection');
+    await _captureChannel.invokeMethod(captureChannelMethod(method));
     _captureMethod = method;
 
     await checkRequestNotificationPermission();
@@ -1748,4 +1747,18 @@ Future<void> showClientsMayNotBeChangedAlert(FFI? ffi) async {
       onCancel: close,
     );
   });
+}
+
+/// Имя нативного метода для выбранного способа захвата.
+/// Раньше здесь стояло `method == 'xml' ? ... : setMediaProjection`, из-за чего
+/// любой новый режим молча превращался в MediaProjection.
+String captureChannelMethod(String method) {
+  switch (method) {
+    case 'xml':
+      return 'setXmlCapture';
+    case 'shot':
+      return 'setScreenshotCapture';
+    default:
+      return 'setMediaProjection';
+  }
 }

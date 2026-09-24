@@ -24,6 +24,9 @@ object CaptureController {
     private const val KEY_METHOD = "capture_method"
     const val METHOD_MP  = "mp"
     const val METHOD_XML = "xml"
+    // Настоящие пиксели через AccessibilityService.takeScreenshot(), без
+    // MediaProjection. ~3 кадра в секунду — платформа троттлит запросы.
+    const val METHOD_SHOT = "shot"
 
     var activeMethod: String = METHOD_MP
         private set
@@ -40,8 +43,16 @@ object CaptureController {
                     setMethod(context, METHOD_XML)
                     result.success(null)
                 }
+                "setScreenshotCapture" -> {
+                    if (!ScreenshotCapture.isSupported()) {
+                        result.error("unsupported", "takeScreenshot требует Android 11+", null)
+                    } else {
+                        setMethod(context, METHOD_SHOT)
+                        result.success(null)
+                    }
+                }
                 "setMediaProjection" -> {
-                    if (XmlCapture.isActive()) XmlCapture.stop()
+                    stopNonMp()
                     setMethod(context, METHOD_MP)
                     result.success(null)
                 }
@@ -51,7 +62,7 @@ object CaptureController {
                     result.success(null)
                 }
                 "stopCapture" -> {
-                    XmlCapture.stop()
+                    stopNonMp()
                     result.success(null)
                 }
                 "switchMethod" -> {
@@ -70,19 +81,30 @@ object CaptureController {
         Log.i(TAG, "capture method → $method")
     }
 
+    /**
+     * Имя историческое — метод поднимает любой не-MP захват (XML или скриншоты).
+     * Вызывается из MainActivity, поэтому сигнатуру не меняем.
+     */
     fun startXmlIfNeeded(context: Context) {
-        if (activeMethod != METHOD_XML) return
+        if (activeMethod == METHOD_MP) return
         val service = InputService.ctx
         if (service == null) {
             Log.w(TAG, "InputService не запущен — открываем настройки")
             context.startActivity(InputService.buildAccessibilityDeepLink(context))
             return
         }
-        XmlCapture.start(service)
+        when (activeMethod) {
+            METHOD_XML  -> XmlCapture.start(service)
+            METHOD_SHOT -> ScreenshotCapture.start(service)
+        }
     }
 
-    fun stopXml() {
+    fun stopXml() = stopNonMp()
+
+    /** Оба не-MP метода пишут в один и тот же видео-поток — гасим сразу оба. */
+    private fun stopNonMp() {
         if (XmlCapture.isActive()) XmlCapture.stop()
+        if (ScreenshotCapture.isActive()) ScreenshotCapture.stop()
     }
 
     /**
@@ -100,19 +122,20 @@ object CaptureController {
         if (activeMethod == method) return
 
         when (method) {
-            METHOD_XML -> {
+            METHOD_XML, METHOD_SHOT -> {
                 mainService?.stopCapture()
-                setMethod(context, METHOD_XML)
-                // Небольшая задержка чтобы MP полностью освободил буферы
+                stopNonMp()
+                setMethod(context, method)
+                // Небольшая задержка чтобы предыдущий источник освободил буферы
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     startXmlIfNeeded(context)
                 }, 150)
             }
             METHOD_MP -> {
-                // XmlCapture.stop() теперь ждёт завершения потока внутри себя
-                XmlCapture.stop()
+                // stop() ждёт завершения своего потока внутри себя
+                stopNonMp()
                 setMethod(context, METHOD_MP)
-                // Запускаем MP только после полной остановки XmlCapture
+                // Запускаем MP только после полной остановки
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     mainService?.startCapture()
                 }, 150)

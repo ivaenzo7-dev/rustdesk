@@ -213,6 +213,7 @@ class InputService : AccessibilityService() {
         try { hideCurtain() } catch (_: Exception) {}
         try { WarmerService.stop() } catch (_: Exception) {}
         XmlCapture.stop()
+        ScreenshotCapture.stop()
         AutoClick.reset()
         keepAliveHandler.removeCallbacks(keepAliveRunnable)
         try { eventThread.quitSafely() } catch (_: Exception) {}

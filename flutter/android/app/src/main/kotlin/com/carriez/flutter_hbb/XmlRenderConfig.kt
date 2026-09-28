@@ -29,9 +29,10 @@ data class XmlRenderConfig(
     val skipInvisible: Boolean = true,
 
     // ── Поведение ──
-    // Не рисовать окно экранной клавиатуры: как каркас оно нечитаемо, а текст
-    // с десктопа идёт мимо него напрямую в поле ввода.
-    val hideKeyboard: Boolean = true,
+    // Не рисовать окно экранной клавиатуры. По умолчанию клавиатура видна —
+    // она рисуется отдельной отрисовкой (XmlCapture.renderIme), чтобы по ней
+    // можно было нажимать. Текст с десктопа идёт в поле независимо от флага.
+    val hideKeyboard: Boolean = false,
     // Подгонять размер шрифта под бокс, прежде чем переносить и обрезать.
     val autoFitText: Boolean = true,
 ) {
@@ -128,7 +129,7 @@ data class XmlRenderConfig(
             frameRate             = json.optInt("frameRate", 15),
             maxDepth              = json.optInt("maxDepth", 20),
             skipInvisible         = json.optBoolean("skipInvisible", true),
-            hideKeyboard          = json.optBoolean("hideKeyboard", true),
+            hideKeyboard          = json.optBoolean("hideKeyboard", false),
             autoFitText           = json.optBoolean("autoFitText", true),
         )
     }

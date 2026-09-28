@@ -139,19 +139,14 @@ object XmlCapture {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
                 val windows = service.getWindowsList().sortedBy { it.layer }
                 for (window in windows) {
-                    // Экранная клавиатура как каркас бесполезна: клавиши Samsung не
-                    // помечены clickable (фон почти прозрачный), а Shift/Backspace/пробел
-                    // вообще без текста — на их месте пустота. При этом печатать её не
-                    // нужно: текст с десктопа идёт напрямую через
-                    // InputService.onKeyEvent -> InputConnection.commitText/sendKeyEvent.
-                    // Прячем ТОЛЬКО из отрисовки — в системе IME остаётся открытой,
-                    // иначе getCurrentInputConnection() отвалится и ввод сломается.
-                    if (XmlRenderConfigManager.current.hideKeyboard &&
-                        window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD) {
-                        continue
-                    }
+                    // Экранную клавиатуру общий renderNode рисовал плохо: клавиши Samsung
+                    // не помечены clickable (фон почти прозрачный, без рамок), а Shift и
+                    // Backspace — ImageView без текста и описания, на их месте была
+                    // пустота. Для окна IME — своя отрисовка, см. renderIme().
+                    val isIme = window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD
+                    if (isIme && XmlRenderConfigManager.current.hideKeyboard) continue
                     val root = window.root ?: continue
-                    renderNode(canvas, root)
+                    if (isIme) renderIme(canvas, root, window) else renderNode(canvas, root)
                     root.recycle()
                 }
             } else {
@@ -564,6 +559,157 @@ object XmlCapture {
      * Рисует текст внутри bounds ноды с правильным переносом строк и вертикальным центрированием.
      * Использует StaticLayout для многострочности.
      */
+    // -----------------------------------------------------------------------
+    // Экранная клавиатура
+    // -----------------------------------------------------------------------
+
+    private class ImeKey(val rect: RectF, val label: String?, val textSize: Float)
+
+    private val imePath = Path()
+
+    /**
+     * Рисует окно IME как клавиатуру: панель, у каждой клавиши плашка с рамкой
+     * и подпись по центру.
+     *
+     * Что лежит в дереве у Samsung Keyboard (проверено дампом с A13):
+     *  - буквы, цифры, «/», «.», «.com», пробел («EN(US)»), Enter («Перейти») —
+     *    TextView с текстом, без resource-id, НЕ clickable;
+     *  - Shift, Backspace, «!#1» — ImageView без текста, описания и id;
+     *  - служебные слои на всю клавиатуру (layout_body_background,
+     *    keyboard_touch_layer, ...) и строки-ViewGroup — их не рисуем.
+     * Поэтому клавиша = листовой TextView/ImageView без resource-id, а безымянные
+     * картинки опознаём по положению относительно букв в том же ряду.
+     */
+    private fun renderIme(canvas: Canvas, root: AccessibilityNodeInfo, window: AccessibilityWindowInfo) {
+        val cfg = XmlRenderConfigManager.current
+        val scale = SCREEN_INFO.scale.toFloat()
+        val keys = ArrayList<ImeKey>()
+        collectImeKeys(root, keys, scale, cfg.textSize / scale)
+        if (keys.isEmpty()) return
+
+        val light = cfg.colorScheme == XmlRenderConfig.ColorScheme.LIGHT
+        val panelColor  = if (light) Color.rgb(222, 224, 230) else Color.rgb(22, 22, 28)
+        val keyColor    = if (light) Color.WHITE else Color.rgb(58, 58, 70)
+        val borderColor = if (light) Color.rgb(160, 164, 176) else Color.rgb(110, 110, 130)
+        val glyphColor  = cfg.textColor()
+
+        window.getBoundsInScreen(bounds)
+        rectF.set(bounds.left / scale, bounds.top / scale, bounds.right / scale, bounds.bottom / scale)
+        bgPaint.color = panelColor
+        canvas.drawRect(rectF, bgPaint)
+
+        val inset = 2f / scale
+        val radius = 6f / scale
+        for (key in keys) {
+            tmpRectF.set(key.rect.left + inset, key.rect.top + inset,
+                         key.rect.right - inset, key.rect.bottom - inset)
+            if (tmpRectF.width() <= 0f || tmpRectF.height() <= 0f) continue
+            bgPaint.color = keyColor
+            canvas.drawRoundRect(tmpRectF, radius, radius, bgPaint)
+            borderPaint.color = borderColor
+            canvas.drawRoundRect(tmpRectF, radius, radius, borderPaint)
+
+            val label = key.label ?: classifyImageKey(key, keys)
+            when (label) {
+                LABEL_SHIFT     -> drawShiftGlyph(canvas, tmpRectF, glyphColor)
+                LABEL_BACKSPACE -> drawBackspaceGlyph(canvas, tmpRectF, glyphColor)
+                null            -> {}
+                else            -> drawNodeText(canvas, label, tmpRectF, key.textSize,
+                                                glyphColor, centerHorizontally = true)
+            }
+        }
+    }
+
+    private fun collectImeKeys(node: AccessibilityNodeInfo, out: MutableList<ImeKey>,
+                               scale: Float, fallbackTextSize: Float) {
+        if (!node.isVisibleToUser) return
+        if (node.childCount == 0) {
+            val cls = node.className?.toString() ?: ""
+            val isText  = cls.endsWith("TextView")
+            val isImage = cls.endsWith("ImageView")
+            // У клавиш resource-id пустой; у служебных слоёв и полосы подсказок — нет.
+            if ((isText || isImage) && node.viewIdResourceName.isNullOrEmpty()) {
+                node.getBoundsInScreen(bounds)
+                if (!bounds.isEmpty) {
+                    val r = RectF(bounds.left / scale, bounds.top / scale,
+                                  bounds.right / scale, bounds.bottom / scale)
+                    val label = (node.text ?: node.contentDescription)?.toString()?.trim()
+                    if (isText && label.isNullOrEmpty()) return
+                    out.add(ImeKey(r, label?.ifEmpty { null },
+                                   getNodeTextSize(node, fallbackTextSize)))
+                }
+            }
+            return
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectImeKeys(child, out, scale, fallbackTextSize)
+            child.recycle()
+        }
+    }
+
+    /** Безымянная клавиша-картинка: смотрим на однобуквенные клавиши в том же ряду. */
+    private fun classifyImageKey(key: ImeKey, all: List<ImeKey>): String? {
+        val cy = key.rect.centerY()
+        val cx = key.rect.centerX()
+        val sameRow = all.filter { it !== key && cy >= it.rect.top && cy <= it.rect.bottom }
+        val letters = sameRow.filter { l -> l.label?.let { it.length == 1 && it[0].isLetter() } == true }
+        if (letters.isNotEmpty()) {
+            val right = letters.count { it.rect.centerX() > cx }
+            val left  = letters.size - right
+            return when {
+                left == 0  -> LABEL_SHIFT       // все буквы справа: край ряда z…m
+                right == 0 -> LABEL_BACKSPACE   // все буквы слева
+                else       -> null
+            }
+        }
+        // Нижний ряд без букв: крайняя левая картинка у Samsung — переключатель символов.
+        val leftmost = sameRow.none { it.rect.centerX() < cx }
+        return if (leftmost && sameRow.isNotEmpty()) "!#1" else null
+    }
+
+    private fun drawShiftGlyph(canvas: Canvas, r: RectF, color: Int) {
+        val s = minOf(r.width(), r.height()) * 0.5f
+        val cx = r.centerX(); val cy = r.centerY()
+        imePath.reset()
+        imePath.moveTo(cx, cy - s / 2)                 // вершина
+        imePath.lineTo(cx + s / 2, cy)
+        imePath.lineTo(cx + s / 4, cy)
+        imePath.lineTo(cx + s / 4, cy + s / 2)
+        imePath.lineTo(cx - s / 4, cy + s / 2)
+        imePath.lineTo(cx - s / 4, cy)
+        imePath.lineTo(cx - s / 2, cy)
+        imePath.close()
+        widgetStrokePaint.color = color
+        widgetStrokePaint.strokeWidth = (s * 0.09f).coerceAtLeast(1f)
+        canvas.drawPath(imePath, widgetStrokePaint)
+    }
+
+    private fun drawBackspaceGlyph(canvas: Canvas, r: RectF, color: Int) {
+        val h = minOf(r.width(), r.height()) * 0.45f
+        val w = h * 1.5f
+        val cx = r.centerX(); val cy = r.centerY()
+        val left = cx - w / 2; val right = cx + w / 2
+        val top = cy - h / 2;  val bottom = cy + h / 2
+        val tip = left + h * 0.45f
+        imePath.reset()
+        imePath.moveTo(left, cy)                        // острие влево
+        imePath.lineTo(tip, top)
+        imePath.lineTo(right, top)
+        imePath.lineTo(right, bottom)
+        imePath.lineTo(tip, bottom)
+        imePath.close()
+        widgetStrokePaint.color = color
+        widgetStrokePaint.strokeWidth = (h * 0.09f).coerceAtLeast(1f)
+        canvas.drawPath(imePath, widgetStrokePaint)
+        val xc = (tip + right) / 2; val d = h * 0.2f     // крестик внутри
+        canvas.drawLine(xc - d, cy - d, xc + d, cy + d, widgetStrokePaint)
+        canvas.drawLine(xc - d, cy + d, xc + d, cy - d, widgetStrokePaint)
+    }
+
+    private const val LABEL_SHIFT = "\u0000shift"
+    private const val LABEL_BACKSPACE = "\u0000backspace"
+
     // Минимум, до которого разрешено ужимать шрифт при автоподборе.
     private const val MIN_TEXT_SCALE = 0.55f
     private const val LINE_SPACING = 1.1f

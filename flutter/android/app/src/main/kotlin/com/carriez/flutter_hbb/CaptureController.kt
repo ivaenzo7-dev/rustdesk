@@ -34,8 +34,22 @@ object CaptureController {
     // Ссылка на MainService для управления VirtualDisplay
     var mainService: MainService? = null
 
+    private var methodLoaded = false
+
+    /**
+     * MainService может работать без MainActivity (старт после загрузки), и тогда
+     * init() не вызывался, а activeMethod остался дефолтным MP — XML-режим из
+     * настроек молча игнорировался. Читаем сохранённый выбор при первом обращении.
+     */
+    fun ensureLoaded(context: Context) {
+        if (methodLoaded) return
+        activeMethod = prefs(context).getString(KEY_METHOD, METHOD_MP) ?: METHOD_MP
+        methodLoaded = true
+    }
+
     fun init(context: Context, messenger: BinaryMessenger) {
         activeMethod = prefs(context).getString(KEY_METHOD, METHOD_MP) ?: METHOD_MP
+        methodLoaded = true
 
         MethodChannel(messenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
@@ -77,6 +91,7 @@ object CaptureController {
 
     private fun setMethod(context: Context, method: String) {
         activeMethod = method
+        methodLoaded = true
         prefs(context).edit().putString(KEY_METHOD, method).apply()
         Log.i(TAG, "capture method → $method")
     }

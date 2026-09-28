@@ -113,7 +113,10 @@ class MainService : Service() {
                 }.toString()
             }
             "is_start" -> {
-                isStart.toString()
+                // Rust (check_change_scale) ждёт этот флаг до 3 с на каждом подключении.
+                // XML и скриншоты свой isStart не выставляют, поэтому раньше в этих
+                // режимах ожидание всегда уходило в таймаут.
+                (isStart || XmlCapture.isActive() || ScreenshotCapture.isActive()).toString()
             }
             else -> ""
         }
@@ -576,6 +579,17 @@ class MainService : Service() {
     }
 
     fun startCapture(): Boolean {
+        // Выбран не MediaProjection — MP не поднимаем вообще. Иначе оба источника
+        // пишут кадры в один видео-поток: XML шлёт 15 кадров/с, MP — при каждом
+        // изменении экрана, и клиент показывает их вперемешку (экран «мерцает»
+        // между обычным видом и XML). Сюда сходятся все точки старта: авторизация
+        // клиента, повторное получение проекции, смена ориентации.
+        CaptureController.ensureLoaded(this)
+        if (CaptureController.activeMethod != CaptureController.METHOD_MP) {
+            Log.d(logTag, "startCapture: method=${CaptureController.activeMethod}, MP skipped")
+            CaptureController.startXmlIfNeeded(this)
+            return true
+        }
         if (isStart) {
             return true
         }

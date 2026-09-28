@@ -901,12 +901,28 @@ class InputService : AccessibilityService() {
             if (keyEvent.hasChr() && (keyEvent.getDown() || keyEvent.getPress())) {
                 keyEvent.getChr()?.let { textToCommit = String(Character.toChars(it)) }
             }
+        } else if (keyEvent.hasChr() &&
+            keyboardMode != KeyboardMode.Map && keyboardMode != KeyboardMode.Translate) {
+            // Вне Legacy/Map/Translate chr — это готовый Unicode-символ, а не код
+            // клавиши (так его трактует и KeyEventConverter). Раньше он уходил в
+            // KeyCharacterMap -> KEYCODE_*, и телефон подставлял букву по СВОЕЙ
+            // раскладке: набранное на компьютере «abc» при русской раскладке
+            // Samsung-клавиатуры приходило как «фис». Печатные символы шлём
+            // текстом; служебные (<0x20, DEL) остаются кодами клавиш.
+            val cp = keyEvent.getChr()
+            if (cp >= 0x20 && cp != 0x7F && Character.isValidCodePoint(cp)) {
+                if (!(keyEvent.getDown() || keyEvent.getPress())) {
+                    return  // отпускание печатной клавиши: текст уже ушёл на нажатии
+                }
+                textToCommit = String(Character.toChars(cp))
+            }
         }
 
-        var ke: KeyEventAndroid? = null
-        if (Build.VERSION.SDK_INT < 33 || textToCommit == null) {
-            ke = KeyEventConverter.toAndroidKeyEvent(keyEvent)
-        }
+        // Строим всегда. Раньше на API 33+ при готовом тексте ke оставался null, и
+        // если InputConnection недоступен, запасной путь ниже (весь под ke?.let)
+        // молча выбрасывал символ. Быстрый путь от этого не меняется: при
+        // textToCommit != null он делает commitText, а ke не трогает.
+        val ke: KeyEventAndroid? = KeyEventConverter.toAndroidKeyEvent(keyEvent)
         ke?.let {
             if (tryHandleVolumeKeyEvent(it)) return
             if (tryHandlePowerKeyEvent(it)) return
@@ -1068,7 +1084,9 @@ class InputService : AccessibilityService() {
 
         var success = false
         if (textToCommit != null) {
-            if (textSelectionStart == -1 || textSelectionEnd == -1) {
+            // В пустом поле node.text — это текст подсказки. Без этой проверки
+            // символ вставлялся прямо в неё: «aЗапрос в Google или URL».
+            if (isShowingHint || textSelectionStart == -1 || textSelectionEnd == -1) {
                 fakeEditTextForTextStateCalculation?.setText(textToCommit)
                 success = updateTextForAccessibilityNode(node)
             } else if (text != null) {

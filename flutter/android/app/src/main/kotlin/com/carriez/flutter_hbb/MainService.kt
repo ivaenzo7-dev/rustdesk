@@ -193,6 +193,18 @@ class MainService : Service() {
             "stop_capture" -> {
                 Log.d(logTag, "from rust:stop_capture")
                 stopCapture()
+                // Rust шлёт stop_capture, только когда отключился последний клиент
+                // с экраном (ui_cm_interface.rs). XML/скриншоты — режим одной
+                // сессии: гасим захват и возвращаем MediaProjection для следующей.
+                if (CaptureController.resetToMediaProjection(this@MainService)) {
+                    Log.i(logTag, "session ended — capture method reset to mp")
+                    Handler(Looper.getMainLooper()).post {
+                        MainActivity.flutterMethodChannel?.invokeMethod(
+                            "on_state_changed",
+                            mapOf("name" to "capture_method", "value" to CaptureController.METHOD_MP)
+                        )
+                    }
+                }
                 // Сессия завершена rust-стороной — убираем штору.
                 Log.i("RentalBanner", "[MainService] rust stop_capture -> hide curtain")
                 RentalBannerService.hide(this@MainService)

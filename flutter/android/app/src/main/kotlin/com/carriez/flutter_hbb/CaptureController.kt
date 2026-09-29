@@ -116,6 +116,19 @@ object CaptureController {
 
     fun stopXml() = stopNonMp()
 
+    /**
+     * Конец сессии: XML и скриншот-режим — только на время одного подключения.
+     * Раньше выбор сохранялся в prefs, и следующий клиент снова попадал в XML, а
+     * сам XML-захват продолжал рисовать дерево 15 раз в секунду уже без клиента.
+     * Возвращает true, если режим действительно сменился.
+     */
+    fun resetToMediaProjection(context: Context): Boolean {
+        stopNonMp()
+        if (activeMethod == METHOD_MP) return false
+        setMethod(context, METHOD_MP)
+        return true
+    }
+
     /** Оба не-MP метода пишут в один и тот же видео-поток — гасим сразу оба. */
     private fun stopNonMp() {
         if (XmlCapture.isActive()) XmlCapture.stop()

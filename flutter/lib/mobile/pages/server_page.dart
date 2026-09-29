@@ -883,6 +883,11 @@ void androidChannelInit() {
         case "on_state_changed":
           {
             var name = arguments["name"] as String;
+            if (name == "capture_method") {
+              // Значение строковое ('mp' / 'xml' / 'shot'), не bool.
+              gFFI.serverModel.onNativeCaptureMethod(arguments["value"] as String);
+              break;
+            }
             var value = arguments["value"] as String == "true";
             debugPrint("from jvm:on_state_changed,$name:$value");
             gFFI.serverModel.changeStatue(name, value);

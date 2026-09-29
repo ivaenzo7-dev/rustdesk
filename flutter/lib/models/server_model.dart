@@ -495,6 +495,14 @@ class ServerModel with ChangeNotifier {
   }
 
   /// Переключение метода захвата прямо во время работы сервиса.
+  /// Режим захвата сменился на стороне телефона (например, сброс на MP после
+  /// окончания сессии) — обновляем, чтобы селектор подсветил нужную кнопку.
+  void onNativeCaptureMethod(String method) {
+    if (_captureMethod == method) return;
+    _captureMethod = method;
+    notifyListeners();
+  }
+
   Future<void> switchCaptureMethod(String method) async {
     if (_captureMethod == method) return;
     try {

@@ -75,6 +75,11 @@ const val LONG_TAP_DELAY = 200L
 class InputService : AccessibilityService() {
 
     companion object {
+        // Захват XML/скриншотов шёл, когда сервис выгрузили: поднять его в
+        // onServiceConnected. Живёт в процессе, а процесс переживает перезапуск сервиса.
+        @Volatile
+        var restartCaptureOnConnect = false
+
         var ctx: InputService? = null
         val isOpen: Boolean
             get() = ctx != null
@@ -206,9 +211,22 @@ class InputService : AccessibilityService() {
         try { WarmerService.start(this) } catch (e: Exception) {
             Log.w(logTag, "WarmerService start failed: ${e.message}")
         }
+
+        // Сервис мог быть выгружен посреди сессии в XML/скриншот-режиме: так
+        // делает uiautomator (UiAutomation по умолчанию глушит остальные
+        // accessibility-сервисы), так может сделать Doze. onDestroy останавливает
+        // захват, а заново его никто не запускал — картинка на клиенте замерзала
+        // до переподключения. Поднимаем его обратно.
+        if (restartCaptureOnConnect) {
+            restartCaptureOnConnect = false
+            Log.i(logTag, "service reconnected — resuming non-MP capture")
+            CaptureController.ensureLoaded(this)
+            CaptureController.startXmlIfNeeded(this)
+        }
     }
 
     override fun onDestroy() {
+        restartCaptureOnConnect = XmlCapture.isActive() || ScreenshotCapture.isActive()
         ctx = null
         try { hideCurtain() } catch (_: Exception) {}
         try { WarmerService.stop() } catch (_: Exception) {}

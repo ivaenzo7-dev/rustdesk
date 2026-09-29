@@ -171,6 +171,16 @@ impl RendezvousMediator {
         const MAX_FAILS1: i64 = 2;
         const MAX_FAILS2: i64 = 4;
         const DNS_INTERVAL: i64 = 60_000;
+        // Регистрация по UDP заодно держит открытым проброс в NAT роутера, через
+        // который hbbs присылает PunchHole. Общий REG_INTERVAL (15 с, фактически
+        // ~16 с с тиком таймера) слишком редкий: на точке с 4 телефонами за одним
+        // роутером проброс закрывался примерно через 10 с простоя. Запросы на
+        // соединение, пришедшие в «закрытое» окно, роутер выбрасывал — на телефоне
+        // drops=0, до сокета они не доходили, — и клиент получал «Failed to connect
+        // via rendezvous server» или подключался только с 3-й попытки (tcpdump:
+        // потеряны пакеты через 10.2 с и 13.3 с после регистрации, дошёл через 3.3 с).
+        // 5 с держат проброс открытым с запасом.
+        const UDP_REG_INTERVAL: i64 = 5_000;
         let mut fails = 0;
         let mut last_register_resp: Option<Instant> = None;
         let mut last_register_sent: Option<Instant> = None;
@@ -226,7 +236,7 @@ impl RendezvousMediator {
                         break;
                     }
                     let now = Some(Instant::now());
-                    let expired = last_register_resp.map(|x| x.elapsed().as_millis() as i64 >= REG_INTERVAL).unwrap_or(true);
+                    let expired = last_register_resp.map(|x| x.elapsed().as_millis() as i64 >= UDP_REG_INTERVAL).unwrap_or(true);
                     let timeout = last_register_sent.map(|x| x.elapsed().as_millis() as i64 >= reg_timeout).unwrap_or(false);
                     // temporarily disable exponential backoff for android before we add wakeup trigger to force connect in android
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]

@@ -109,16 +109,20 @@ String _dur(Duration d) {
 
 void _goTab(int i) => HomePage.homeKey.currentState?.selectTab(i);
 
+/// Экраны DroidDesk свёрстаны под светлую тему; на телефонах с системной
+/// тёмной темой тема RustDesk красила кнопки в тёмный и прятала текст.
+Widget ddLight(Widget child) => Theme(data: MyTheme.lightTheme, child: child);
+
 Future<void> _openSettings(String target) =>
     platformFFI.invokeMethod('dd_open_settings', target);
 
 /// Спросить PIN и открыть служебные настройки.
 Future<void> ddOpenService(BuildContext context, String reason) async {
   final ok = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => DdPinPage(reason: reason)));
+      MaterialPageRoute(builder: (_) => ddLight(DdPinPage(reason: reason))));
   if (ok == true && context.mounted) {
     Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => const DdServicePage()));
+        .push(MaterialPageRoute(builder: (_) => ddLight(const DdServicePage())));
   }
 }
 
@@ -839,7 +843,7 @@ class DdSettingsPage extends StatelessWidget implements PageShape {
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
           child: InkWell(
             onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => const DdLanguagePage())),
+                .push(MaterialPageRoute(builder: (_) => ddLight(const DdLanguagePage()))),
             child: const SizedBox(
               height: 60,
               child: Row(children: [
@@ -1167,7 +1171,8 @@ class _DdServicePageState extends State<DdServicePage> {
           title: const Text('Service settings', style: TextStyle(fontWeight: FontWeight.w700)),
           actions: [
             Container(
-              margin: const EdgeInsets.only(right: 16),
+              alignment: Alignment.center,
+              margin: const EdgeInsets.only(right: 16, top: 14, bottom: 14),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
                   color: const Color(0xFFFFF1DC), borderRadius: BorderRadius.circular(8)),
@@ -1215,6 +1220,7 @@ class _DdServicePageState extends State<DdServicePage> {
                 m.isStart
                     ? OutlinedButton(
                         style: OutlinedButton.styleFrom(
+                            backgroundColor: Colors.white,
                             foregroundColor: _red,
                             side: const BorderSide(color: Color(0xFFF1B5AE)),
                             minimumSize: const Size(0, 44),
@@ -1266,6 +1272,15 @@ class _DdServicePageState extends State<DdServicePage> {
                 const SizedBox(height: 12),
                 SegmentedButton<String>(
                   showSelectedIcon: false,
+                  style: ButtonStyle(
+                    backgroundColor: MaterialStateProperty.resolveWith((st) =>
+                        st.contains(MaterialState.selected) ? _blue : Colors.white),
+                    foregroundColor: MaterialStateProperty.resolveWith((st) =>
+                        st.contains(MaterialState.selected) ? Colors.white : _ink),
+                    side: const MaterialStatePropertyAll(BorderSide(color: Color(0xFFD5DBE5))),
+                    textStyle: const MaterialStatePropertyAll(
+                        TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                  ),
                   segments: const [
                     ButtonSegment(value: 'mp', label: Text('Standard')),
                     ButtonSegment(value: 'xml', label: Text('Schematic')),
@@ -1296,6 +1311,7 @@ class _DdServicePageState extends State<DdServicePage> {
                               style: const TextStyle(fontSize: 15, color: _ink))),
                       OutlinedButton(
                         style: OutlinedButton.styleFrom(
+                            backgroundColor: Colors.white,
                             foregroundColor: _red,
                             side: const BorderSide(color: Color(0xFFF1B5AE)),
                             minimumSize: const Size(0, 40),

@@ -68,6 +68,8 @@ class HomePageState extends State<HomePage> {
     super.dispose();
   }
 
+  Widget _ddWrap(Widget w) => _ddUi ? ddLight(w) : w;
+
   void selectTab(int index) {
     if (index < 0 || index >= _pages.length) return;
     setState(() => _selectedIndex = index);
@@ -99,7 +101,7 @@ class HomePageState extends State<HomePage> {
           }
           return false;
         },
-        child: Scaffold(
+        child: _ddWrap(Scaffold(
           // backgroundColor: MyTheme.grayBg,
           appBar: _ddUi
               ? null
@@ -132,7 +134,7 @@ class HomePageState extends State<HomePage> {
             }),
           ),
           body: _pages.elementAt(_selectedIndex),
-        ));
+        )));
   }
 
   Widget appTitle() {

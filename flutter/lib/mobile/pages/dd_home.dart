@@ -18,17 +18,27 @@ import 'settings_page.dart';
 /// PIN служебных настроек. Один на весь парк; поменять перед раскаткой.
 const String kDdServicePin = '1234';
 
-const _ink = Color(0xFF0E1726);
-const _ink2 = Color(0xFF3D4757);
-const _muted = Color(0xFF5B6577);
-const _line = Color(0xFFEDF1F6);
-const _border = Color(0xFFDFE5EE);
-const _bg = Color(0xFFF2F5FA);
-const _blue = Color(0xFF1463F3);
-const _blueSoft = Color(0xFFEAF1FF);
-const _green = Color(0xFF12805C);
-const _amber = Color(0xFF8A4B00);
-const _red = Color(0xFFB42318);
+// Только тёмная тема.
+const _bg = Color(0xFF0B0F17); // фон страниц
+const _surface = Color(0xFF151B26); // карточки
+const _surface2 = Color(0xFF1F2733); // кнопки/клавиши на карточках
+const _ink = Color(0xFFE8ECF3); // основной текст
+const _ink2 = Color(0xFFB4BDCB);
+const _muted = _muted;
+const _faint = Color(0xFF5E6878); // недоступное
+const _line = Color(0xFF232B38);
+const _border = Color(0xFF2C3544);
+const _blue = Color(0xFF3B82F6);
+const _blueSoft = Color(0xFF16233D);
+const _green = Color(0xFF34C38F);
+const _greenBtn = Color(0xFF1E9E6F);
+const _amber = Color(0xFFF5A524);
+const _amberSoft = Color(0xFF2E2410);
+const _orange = Color(0xFFF97316);
+const _orangeBtn = Color(0xFFC2410C);
+const _red = Color(0xFFF26B5B);
+const _redBtn = Color(0xFFD13A2A);
+const _redLine = Color(0xFF5A2A2A);
 
 // ---------------------------------------------------------------------------
 // Данные
@@ -109,9 +119,8 @@ String _dur(Duration d) {
 
 void _goTab(int i) => HomePage.homeKey.currentState?.selectTab(i);
 
-/// Экраны DroidDesk свёрстаны под светлую тему; на телефонах с системной
-/// тёмной темой тема RustDesk красила кнопки в тёмный и прятала текст.
-Widget ddLight(Widget child) => Theme(data: MyTheme.lightTheme, child: child);
+/// Экраны DroidDesk всегда в тёмной теме, независимо от системной.
+Widget ddDark(Widget child) => Theme(data: MyTheme.darkTheme, child: child);
 
 Future<void> _openSettings(String target) =>
     platformFFI.invokeMethod('dd_open_settings', target);
@@ -119,10 +128,10 @@ Future<void> _openSettings(String target) =>
 /// Спросить PIN и открыть служебные настройки.
 Future<void> ddOpenService(BuildContext context, String reason) async {
   final ok = await Navigator.of(context).push<bool>(
-      MaterialPageRoute(builder: (_) => ddLight(DdPinPage(reason: reason))));
+      MaterialPageRoute(builder: (_) => ddDark(DdPinPage(reason: reason))));
   if (ok == true && context.mounted) {
     Navigator.of(context)
-        .push(MaterialPageRoute(builder: (_) => ddLight(const DdServicePage())));
+        .push(MaterialPageRoute(builder: (_) => ddDark(const DdServicePage())));
   }
 }
 
@@ -133,7 +142,7 @@ Future<void> ddOpenService(BuildContext context, String reason) async {
 Widget _card({required Widget child, EdgeInsets? padding, Color? color}) =>
     Container(
       decoration: BoxDecoration(
-          color: color ?? Colors.white,
+          color: color ?? _surface,
           borderRadius: BorderRadius.circular(20)),
       padding: padding ?? const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
       child: child,
@@ -185,7 +194,9 @@ class _Page extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light,
+      child: Container(
       color: background,
       child: SafeArea(
         bottom: false,
@@ -199,7 +210,7 @@ class _Page extends StatelessWidget {
           ],
         ),
       ),
-    );
+    ));
   }
 }
 
@@ -326,12 +337,13 @@ class _DdDevicePageState extends State<DdDevicePage> {
           width: 52,
           height: 92,
           decoration: BoxDecoration(
-              color: const Color(0xFF1C2433),
+              color: const Color(0xFF05070B),
+              border: Border.all(color: _border),
               borderRadius: BorderRadius.circular(9)),
           padding: const EdgeInsets.fromLTRB(4, 8, 4, 8),
           child: Container(
               decoration: BoxDecoration(
-                  color: const Color(0xFF3B5BDB).withOpacity(0.55),
+                  color: _blue.withOpacity(0.45),
                   borderRadius: BorderRadius.circular(4))),
         ),
         const SizedBox(width: 16),
@@ -394,10 +406,10 @@ class _DdDevicePageState extends State<DdDevicePage> {
     VoidCallback? onAction;
     switch (kind) {
       case DdKind.stopped:
-        bg = const Color(0xFFFDECEA);
-        border = const Color(0xFFF4BDB6);
+        bg = const Color(0xFF2A1517);
+        border = _redLine;
         icon = _red;
-        btn = _red;
+        btn = _redBtn;
         glyph = Icons.stop_rounded;
         title = 'Service stopped';
         body = 'This phone isn’t accepting connections.';
@@ -405,10 +417,10 @@ class _DdDevicePageState extends State<DdDevicePage> {
         onAction = () => gFFI.serverModel.toggleService();
         break;
       case DdKind.permission:
-        bg = const Color(0xFFFFF1E6);
-        border = const Color(0xFFF7C9A3);
-        icon = const Color(0xFFC2410C);
-        btn = const Color(0xFF9A3412);
+        bg = const Color(0xFF2A1C10);
+        border = const Color(0xFF5C3A1A);
+        icon = _orange;
+        btn = _orangeBtn;
         glyph = Icons.priority_high_rounded;
         title = 'Permission needed';
         body = 'DroidDesk can’t see or control the screen yet.';
@@ -416,10 +428,10 @@ class _DdDevicePageState extends State<DdDevicePage> {
         onAction = () => _goTab(1);
         break;
       case DdKind.noInternet:
-        bg = const Color(0xFFFFF1E6);
-        border = const Color(0xFFF7C9A3);
-        icon = const Color(0xFFC2410C);
-        btn = const Color(0xFF9A3412);
+        bg = const Color(0xFF2A1C10);
+        border = const Color(0xFF5C3A1A);
+        icon = _orange;
+        btn = _orangeBtn;
         glyph = Icons.wifi_off_rounded;
         title = 'No internet';
         body = 'Check Wi‑Fi or the mobile network.';
@@ -427,10 +439,10 @@ class _DdDevicePageState extends State<DdDevicePage> {
         onAction = _check;
         break;
       case DdKind.offline:
-        bg = const Color(0xFFFFF1E6);
-        border = const Color(0xFFF7C9A3);
-        icon = const Color(0xFFC2410C);
-        btn = const Color(0xFF9A3412);
+        bg = const Color(0xFF2A1C10);
+        border = const Color(0xFF5C3A1A);
+        icon = _orange;
+        btn = _orangeBtn;
         glyph = Icons.cloud_off_rounded;
         title = 'Can’t reach DroidDesk';
         body = 'The internet works, but the DroidDesk server isn’t answering yet.';
@@ -438,10 +450,10 @@ class _DdDevicePageState extends State<DdDevicePage> {
         onAction = _check;
         break;
       case DdKind.warning:
-        bg = const Color(0xFFFFF6E5);
-        border = const Color(0xFFF5D9A6);
-        icon = const Color(0xFFB26A00);
-        btn = _amber;
+        bg = _amberSoft;
+        border = const Color(0xFF5A4818);
+        icon = _amber;
+        btn = const Color(0xFFB7791F);
         glyph = Icons.priority_high_rounded;
         title = 'Ready, with a warning';
         body = DdHealth.instance.ignoringBattery
@@ -451,10 +463,10 @@ class _DdDevicePageState extends State<DdDevicePage> {
         onAction = () => _goTab(1);
         break;
       default:
-        bg = const Color(0xFFE9F6EF);
-        border = const Color(0xFFBFE3CF);
-        icon = _green;
-        btn = _green;
+        bg = const Color(0xFF0F2A20);
+        border = const Color(0xFF1F5A41);
+        icon = _greenBtn;
+        btn = _greenBtn;
         glyph = Icons.check_rounded;
         title = 'Device is ready';
         body = 'Everything is set up. This phone can be rented.';
@@ -526,7 +538,7 @@ class _DdDevicePageState extends State<DdDevicePage> {
         value,
         if (onTap != null) ...[
           const SizedBox(width: 6),
-          const Icon(Icons.chevron_right_rounded, size: 20, color: Color(0xFF8A94A6)),
+          const Icon(Icons.chevron_right_rounded, size: 20, color: _muted),
         ],
       ]),
     );
@@ -629,7 +641,7 @@ class _DdDevicePageState extends State<DdDevicePage> {
       Container(
         decoration: BoxDecoration(
             color: _blueSoft,
-            border: Border.all(color: const Color(0xFFC9DAFB)),
+            border: Border.all(color: const Color(0xFF24406E)),
             borderRadius: BorderRadius.circular(20)),
         padding: const EdgeInsets.all(18),
         child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -649,7 +661,7 @@ class _DdDevicePageState extends State<DdDevicePage> {
             Container(
               width: 52,
               height: 52,
-              decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle),
+              decoration: const BoxDecoration(color: _surface2, shape: BoxShape.circle),
               child: const Icon(Icons.person_outline_rounded, color: _blue, size: 28),
             ),
             const SizedBox(width: 14),
@@ -717,7 +729,7 @@ class DdPermissionsPage extends StatelessWidget implements PageShape {
         } else {
           right = TextButton.icon(
             style: TextButton.styleFrom(
-                backgroundColor: const Color(0xFFFFF1DC),
+                backgroundColor: _amberSoft,
                 foregroundColor: _amber,
                 minimumSize: const Size(0, 36),
                 padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -829,7 +841,9 @@ class DdSettingsPage extends StatelessWidget implements PageShape {
             Switch(
               value: value,
               activeColor: Colors.white,
-              activeTrackColor: _green,
+              activeTrackColor: _greenBtn,
+              inactiveThumbColor: _muted,
+              inactiveTrackColor: _surface2,
               onChanged: (_) => onChanged(),
             ),
           ]),
@@ -843,7 +857,7 @@ class DdSettingsPage extends StatelessWidget implements PageShape {
           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 4),
           child: InkWell(
             onTap: () => Navigator.of(context)
-                .push(MaterialPageRoute(builder: (_) => ddLight(const DdLanguagePage()))),
+                .push(MaterialPageRoute(builder: (_) => ddDark(const DdLanguagePage()))),
             child: const SizedBox(
               height: 60,
               child: Row(children: [
@@ -854,7 +868,7 @@ class DdSettingsPage extends StatelessWidget implements PageShape {
                         style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _ink))),
                 Text('English', style: TextStyle(fontSize: 15, color: _muted)),
                 SizedBox(width: 6),
-                Icon(Icons.chevron_right_rounded, color: Color(0xFF8A94A6)),
+                Icon(Icons.chevron_right_rounded, color: _muted),
               ]),
             ),
           ),
@@ -892,7 +906,7 @@ class DdSettingsPage extends StatelessWidget implements PageShape {
             child: SizedBox(
               height: 64,
               child: Row(children: [
-                Icon(Icons.lock_outline_rounded, color: session ? const Color(0xFF9AA3B2) : _amber),
+                Icon(Icons.lock_outline_rounded, color: session ? _faint : _amber),
                 const SizedBox(width: 12),
                 Expanded(
                   child: Column(
@@ -903,14 +917,14 @@ class DdSettingsPage extends StatelessWidget implements PageShape {
                           style: TextStyle(
                               fontSize: 16,
                               fontWeight: FontWeight.w600,
-                              color: session ? const Color(0xFF9AA3B2) : _ink)),
+                              color: session ? _faint : _ink)),
                       Text(session ? 'Unavailable during a session' : 'For staff. PIN required.',
                           style: const TextStyle(fontSize: 13, color: _muted)),
                     ],
                   ),
                 ),
                 if (!session)
-                  const Icon(Icons.chevron_right_rounded, color: Color(0xFF8A94A6)),
+                  const Icon(Icons.chevron_right_rounded, color: _muted),
               ]),
             ),
           ),
@@ -956,12 +970,12 @@ class DdLanguagePage extends StatelessWidget {
                       child: Text(langs[i][0] as String,
                           style: TextStyle(
                               fontSize: 16,
-                              color: langs[i][1] == true ? _ink : const Color(0xFF9AA3B2)))),
+                              color: langs[i][1] == true ? _ink : _faint))),
                   if (i == 0)
                     const Icon(Icons.check_rounded, color: _blue)
                   else
                     const Text('Coming soon',
-                        style: TextStyle(fontSize: 13, color: Color(0xFF9AA3B2))),
+                        style: TextStyle(fontSize: 13, color: _faint)),
                 ]),
               ),
           ]),
@@ -1017,7 +1031,7 @@ class _DdPinPageState extends State<DdPinPage> {
                       child: const Icon(Icons.backspace_outlined, color: _ink)))
               : ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
+                      backgroundColor: _surface2,
                       foregroundColor: _ink,
                       elevation: 0,
                       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16))),
@@ -1133,11 +1147,15 @@ class _DdServicePageState extends State<DdServicePage> {
     final r = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
+        backgroundColor: _surface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(22)),
-        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700)),
+        title: Text(title, style: const TextStyle(fontWeight: FontWeight.w700, color: _ink)),
         content: Text(body, style: const TextStyle(height: 1.45, color: _ink2)),
         actions: [
-          TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancel')),
+          TextButton(
+              style: TextButton.styleFrom(foregroundColor: _ink2),
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('Cancel')),
           TextButton(
               style: TextButton.styleFrom(foregroundColor: _red),
               onPressed: () => Navigator.of(ctx).pop(true),
@@ -1163,9 +1181,9 @@ class _DdServicePageState extends State<DdServicePage> {
     return Listener(
       onPointerDown: (_) => _bump(),
       child: Scaffold(
-        backgroundColor: const Color(0xFFEEF1F6),
+        backgroundColor: _bg,
         appBar: AppBar(
-          backgroundColor: const Color(0xFFEEF1F6),
+          backgroundColor: _bg,
           foregroundColor: _ink,
           elevation: 0,
           title: const Text('Service settings', style: TextStyle(fontWeight: FontWeight.w700)),
@@ -1175,7 +1193,7 @@ class _DdServicePageState extends State<DdServicePage> {
               margin: const EdgeInsets.only(right: 16, top: 14, bottom: 14),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                  color: const Color(0xFFFFF1DC), borderRadius: BorderRadius.circular(8)),
+                  color: _amberSoft, borderRadius: BorderRadius.circular(8)),
               child: const Text('STAFF ONLY',
                   style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: _amber)),
             ),
@@ -1220,9 +1238,9 @@ class _DdServicePageState extends State<DdServicePage> {
                 m.isStart
                     ? OutlinedButton(
                         style: OutlinedButton.styleFrom(
-                            backgroundColor: Colors.white,
+                            backgroundColor: Colors.transparent,
                             foregroundColor: _red,
-                            side: const BorderSide(color: Color(0xFFF1B5AE)),
+                            side: const BorderSide(color: _redLine),
                             minimumSize: const Size(0, 44),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))),
                         onPressed: () async {
@@ -1236,7 +1254,7 @@ class _DdServicePageState extends State<DdServicePage> {
                       )
                     : ElevatedButton(
                         style: ElevatedButton.styleFrom(
-                            backgroundColor: _green,
+                            backgroundColor: _greenBtn,
                             foregroundColor: Colors.white,
                             elevation: 0,
                             minimumSize: const Size(0, 44),
@@ -1274,10 +1292,10 @@ class _DdServicePageState extends State<DdServicePage> {
                   showSelectedIcon: false,
                   style: ButtonStyle(
                     backgroundColor: MaterialStateProperty.resolveWith((st) =>
-                        st.contains(MaterialState.selected) ? _blue : Colors.white),
+                        st.contains(MaterialState.selected) ? _blue : _surface2),
                     foregroundColor: MaterialStateProperty.resolveWith((st) =>
                         st.contains(MaterialState.selected) ? Colors.white : _ink),
-                    side: const MaterialStatePropertyAll(BorderSide(color: Color(0xFFD5DBE5))),
+                    side: const MaterialStatePropertyAll(BorderSide(color: _border)),
                     textStyle: const MaterialStatePropertyAll(
                         TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                   ),
@@ -1311,9 +1329,9 @@ class _DdServicePageState extends State<DdServicePage> {
                               style: const TextStyle(fontSize: 15, color: _ink))),
                       OutlinedButton(
                         style: OutlinedButton.styleFrom(
-                            backgroundColor: Colors.white,
+                            backgroundColor: Colors.transparent,
                             foregroundColor: _red,
-                            side: const BorderSide(color: Color(0xFFF1B5AE)),
+                            side: const BorderSide(color: _redLine),
                             minimumSize: const Size(0, 40),
                             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                         onPressed: () async {
@@ -1351,10 +1369,10 @@ class _DdServicePageState extends State<DdServicePage> {
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Advanced settings',
                       style: TextStyle(fontWeight: FontWeight.w600, color: _ink)),
-                  subtitle: const Text('Original RustDesk settings'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
+                  subtitle: const Text('Original RustDesk settings', style: TextStyle(color: _muted)),
+                  trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => Scaffold(
+                      builder: (_) => ddDark(Scaffold(
                           appBar: AppBar(title: const Text('RustDesk settings')),
                           body: SettingsPage()))),
                 ),
@@ -1362,10 +1380,10 @@ class _DdServicePageState extends State<DdServicePage> {
                   contentPadding: EdgeInsets.zero,
                   title: const Text('Original RustDesk screen',
                       style: TextStyle(fontWeight: FontWeight.w600, color: _ink)),
-                  subtitle: const Text('Old connection page, for troubleshooting'),
-                  trailing: const Icon(Icons.chevron_right_rounded),
+                  subtitle: const Text('Old connection page, for troubleshooting', style: TextStyle(color: _muted)),
+                  trailing: const Icon(Icons.chevron_right_rounded, color: _muted),
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
-                      builder: (_) => Scaffold(
+                      builder: (_) => ddDark(Scaffold(
                           appBar: AppBar(title: const Text('RustDesk')),
                           body: ServerPage()))),
                 ),
@@ -1376,8 +1394,8 @@ class _DdServicePageState extends State<DdServicePage> {
               height: 52,
               child: ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                    backgroundColor: _ink,
-                    foregroundColor: Colors.white,
+                    backgroundColor: _surface2,
+                    foregroundColor: _ink,
                     elevation: 0,
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
                 onPressed: () => Navigator.of(context).pop(),

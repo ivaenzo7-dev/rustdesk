@@ -68,7 +68,7 @@ class HomePageState extends State<HomePage> {
     super.dispose();
   }
 
-  Widget _ddWrap(Widget w) => _ddUi ? ddLight(w) : w;
+  Widget _ddWrap(Widget w) => _ddUi ? ddDark(w) : w;
 
   void selectTab(int index) {
     if (index < 0 || index >= _pages.length) return;
@@ -118,8 +118,9 @@ class HomePageState extends State<HomePage> {
                 .toList(),
             currentIndex: _selectedIndex,
             type: BottomNavigationBarType.fixed,
-            selectedItemColor: _ddUi ? const Color(0xFF1463F3) : MyTheme.accent, //
-            unselectedItemColor: MyTheme.darkGray,
+            backgroundColor: _ddUi ? const Color(0xFF151B26) : null,
+            selectedItemColor: _ddUi ? const Color(0xFF3B82F6) : MyTheme.accent, //
+            unselectedItemColor: _ddUi ? const Color(0xFF8A94A6) : MyTheme.darkGray,
             onTap: (index) => setState(() {
               // close chat overlay when go chat page
               if (_selectedIndex != index) {

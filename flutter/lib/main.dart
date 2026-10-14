@@ -560,7 +560,8 @@ class _AppState extends State<App> with WidgetsBindingObserver {
               : bind.mainGetAppNameSync(),
           theme: MyTheme.lightTheme,
           darkTheme: MyTheme.darkTheme,
-          themeMode: MyTheme.currentThemeMode(),
+          // Телефоны парка DroidDesk: только тёмная тема.
+          themeMode: isAndroid ? ThemeMode.dark : MyTheme.currentThemeMode(),
           home: isDesktop
               ? const DesktopTabPage()
               : isWeb

@@ -1374,7 +1374,7 @@ class _DdServicePageState extends State<DdServicePage> {
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => ddDark(Scaffold(
                           appBar: AppBar(title: const Text('RustDesk settings')),
-                          body: SettingsPage()))),
+                          body: SettingsPage())))),
                 ),
                 ListTile(
                   contentPadding: EdgeInsets.zero,
@@ -1385,7 +1385,7 @@ class _DdServicePageState extends State<DdServicePage> {
                   onTap: () => Navigator.of(context).push(MaterialPageRoute(
                       builder: (_) => ddDark(Scaffold(
                           appBar: AppBar(title: const Text('RustDesk')),
-                          body: ServerPage()))),
+                          body: ServerPage())))),
                 ),
               ]),
             ),

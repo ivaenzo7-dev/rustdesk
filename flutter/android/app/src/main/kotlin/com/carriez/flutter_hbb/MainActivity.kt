@@ -424,9 +424,83 @@ class MainActivity : FlutterActivity() {
                 "privacy_screen_status" -> {
                     result.success(RentalBannerService.isShowing)
                 }
+                // Новый интерфейс DroidDesk: данные для чек-листа на вкладке Device.
+                "dd_health" -> {
+                    result.success(ddHealth())
+                }
+                // Открыть нужный раздел системных настроек (кнопки Grant в Service settings).
+                "dd_open_settings" -> {
+                    result.success(ddOpenSettings(call.arguments as? String ?: "app"))
+                }
                 else -> result.error("-1", "No such method", null)
             }
         }
+    }
+
+    private fun ddHealth(): HashMap<String, Any> {
+        val m = HashMap<String, Any>()
+        try {
+            val bm = getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+            m["batteryLevel"] = bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+            val st = registerReceiver(null, android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            m["charging"] = (st?.getIntExtra(android.os.BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+        } catch (e: Exception) {
+            Log.w(logTag, "ddHealth battery: ${e.message}")
+        }
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        m["ignoringBatteryOptimizations"] =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) pm.isIgnoringBatteryOptimizations(packageName) else true
+        m["canDrawOverlays"] =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(this) else true
+        m["accessibility"] = isAccessibilityEnabled()
+        var net = "none"
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+                if (caps != null) {
+                    // Wi-Fi и сотовую проверяем первыми: через VPN (tun0 у части парка)
+                    // активная сеть несёт и TRANSPORT_VPN, и реальный транспорт под ним.
+                    net = when {
+                        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
+                        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR) -> "cellular"
+                        caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
+                        else -> "other"
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(logTag, "ddHealth network: ${e.message}")
+        }
+        m["network"] = net
+        m["manufacturer"] = Build.MANUFACTURER ?: ""
+        m["model"] = Build.MODEL ?: ""
+        m["release"] = Build.VERSION.RELEASE ?: ""
+        // Имя устройства из настроек (у Samsung — маркетинговое, «Galaxy S21 5G»).
+        m["deviceName"] = try { Settings.Global.getString(contentResolver, "device_name") ?: "" } catch (_: Exception) { "" }
+        return m
+    }
+
+    private fun ddOpenSettings(target: String): Boolean {
+        val pkg = android.net.Uri.parse("package:$packageName")
+        val intents = when (target) {
+            "accessibility" -> listOf(InputService.buildAccessibilityDeepLink(this),
+                Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            "battery" -> listOf(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, pkg),
+                Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            "overlay" -> listOf(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg))
+            else -> listOf(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg))
+        }
+        for (i in intents) {
+            try {
+                i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(i)
+                return true
+            } catch (e: Exception) {
+                Log.w(logTag, "ddOpenSettings($target): ${e.message}")
+            }
+        }
+        return false
     }
 
     private fun setCodecInfo() {

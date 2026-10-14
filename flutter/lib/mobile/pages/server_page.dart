@@ -45,47 +45,7 @@ class _ServerPageState extends State<ServerPage> {
     gFFI.serverModel.checkAndroidPermission();
   }
 
-  Future<dynamic> _onAndroidCall(MethodCall call) async {
-    switch (call.method) {
-      case 'get_server_password':
-        final pw = gFFI.serverModel.serverPasswd.value.text.trim();
-        debugPrint('get_server_password → $pw');
-        return pw;
-      case 'mainUpdateTemporaryPassword':
-        await bind.mainUpdateTemporaryPassword();
-        return null;
-      case 'get_rustdesk_id':
-        var id = gFFI.serverModel.serverId.value.text.trim();
-        if (id.isEmpty) {
-          try {
-            await gFFI.serverModel.fetchID();
-            id = gFFI.serverModel.serverId.value.text.trim();
-          } catch (_) {}
-        }
-        debugPrint('get_rustdesk_id → $id');
-        return id;
-      case 'close_current_session':
-        try {
-          for (final c in gFFI.serverModel.clients) {
-            await bind.cmCloseConnection(connId: c.id);
-            await gFFI.invokeMethod("cancel_notification", c.id);
-          }
-        } catch (e) {
-          debugPrint('close_current_session error: $e');
-        }
-        try {
-          await gFFI.serverModel.restartServiceOnSessionExpiry();
-        } catch (e) {
-          debugPrint('restartServiceOnSessionExpiry error: $e');
-        }
-        return null;
-      default:
-        throw PlatformException(
-          code: 'Unimplemented',
-          message: 'mChannel.${call.method} not implemented',
-        );
-    }
-  }
+  Future<dynamic> _onAndroidCall(MethodCall call) => handleMChannelCall(call);
 
   @override
   void dispose() {
@@ -931,3 +891,47 @@ void androidChannelInit() {
   });
 }
 
+/// Обработчик канала mChannel: через него MainService запрашивает пароль и ID
+/// RustDesk и закрывает сессию по окончании аренды. Вынесен на верхний уровень,
+/// чтобы его ставила и новая главная DroidDesk (HomePage), и старый ServerPage.
+Future<dynamic> handleMChannelCall(MethodCall call) async {
+  switch (call.method) {
+    case 'get_server_password':
+      final pw = gFFI.serverModel.serverPasswd.value.text.trim();
+      debugPrint('get_server_password → $pw');
+      return pw;
+    case 'mainUpdateTemporaryPassword':
+      await bind.mainUpdateTemporaryPassword();
+      return null;
+    case 'get_rustdesk_id':
+      var id = gFFI.serverModel.serverId.value.text.trim();
+      if (id.isEmpty) {
+        try {
+          await gFFI.serverModel.fetchID();
+          id = gFFI.serverModel.serverId.value.text.trim();
+        } catch (_) {}
+      }
+      debugPrint('get_rustdesk_id → $id');
+      return id;
+    case 'close_current_session':
+      try {
+        for (final c in gFFI.serverModel.clients) {
+          await bind.cmCloseConnection(connId: c.id);
+          await gFFI.invokeMethod("cancel_notification", c.id);
+        }
+      } catch (e) {
+        debugPrint('close_current_session error: $e');
+      }
+      try {
+        await gFFI.serverModel.restartServiceOnSessionExpiry();
+      } catch (e) {
+        debugPrint('restartServiceOnSessionExpiry error: $e');
+      }
+      return null;
+    default:
+      throw PlatformException(
+        code: 'Unimplemented',
+        message: 'mChannel.${call.method} not implemented',
+      );
+  }
+}

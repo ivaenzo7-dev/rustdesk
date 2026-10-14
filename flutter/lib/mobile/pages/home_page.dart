@@ -1,4 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_hbb/mobile/pages/dd_home.dart';
 import 'package:flutter_hbb/mobile/pages/server_page.dart';
 import 'package:flutter_hbb/mobile/pages/settings_page.dart';
 import 'package:flutter_hbb/web/settings_page.dart';
@@ -37,20 +41,47 @@ class HomePageState extends State<HomePage> {
     });
   }
 
+  /// Новый интерфейс DroidDesk (вкладки Device / Permissions / Settings).
+  bool get _ddUi => isAndroid && !bind.isOutgoingOnly();
+  Timer? _ddIdTimer;
+
   @override
   void initState() {
     super.initState();
     initPages();
+    if (_ddUi) {
+      // То, что раньше делал ServerPage в initState. ServerPage больше не
+      // главная вкладка, а без этого MainService не получит пароль и ID RustDesk
+      // и не сможет закрыть сессию по окончании аренды.
+      const MethodChannel('mChannel').setMethodCallHandler(handleMChannelCall);
+      _ddIdTimer = periodic_immediate(const Duration(seconds: 3), () async {
+        await gFFI.serverModel.fetchID();
+      });
+      gFFI.serverModel.checkAndroidPermission();
+      DdHealth.instance.start();
+    }
+  }
+
+  @override
+  void dispose() {
+    _ddIdTimer?.cancel();
+    super.dispose();
+  }
+
+  void selectTab(int index) {
+    if (index < 0 || index >= _pages.length) return;
+    setState(() => _selectedIndex = index);
   }
 
   void initPages() {
     _pages.clear();
-    if (isAndroid && !bind.isOutgoingOnly()) {
-      _chatPageTabIndex = _pages.length;
-      _pages.addAll([ChatPage(type: ChatPageType.mobileMain), ServerPage()]);
-      // Set ServerPage active by default
-      final serverIndex = _chatPageTabIndex + 1;
-      _selectedIndex = serverIndex;
+    if (_ddUi) {
+      // Чат и старая страница «Share screen» убраны. Оригинальные экраны
+      // RustDesk доступны из Service settings (по PIN).
+      _chatPageTabIndex = -1;
+      _pages.addAll([DdDevicePage(), DdPermissionsPage(), DdSettingsPage()]);
+      _selectedIndex = 0;
+      return;
     }
     _pages.add(SettingsPage());
   }
@@ -70,11 +101,13 @@ class HomePageState extends State<HomePage> {
         },
         child: Scaffold(
           // backgroundColor: MyTheme.grayBg,
-          appBar: AppBar(
-            centerTitle: true,
-            title: appTitle(),
-            actions: _pages.elementAt(_selectedIndex).appBarActions,
-          ),
+          appBar: _ddUi
+              ? null
+              : AppBar(
+                  centerTitle: true,
+                  title: appTitle(),
+                  actions: _pages.elementAt(_selectedIndex).appBarActions,
+                ),
           bottomNavigationBar: BottomNavigationBar(
             key: navigationBarKey,
             items: _pages
@@ -83,7 +116,7 @@ class HomePageState extends State<HomePage> {
                 .toList(),
             currentIndex: _selectedIndex,
             type: BottomNavigationBarType.fixed,
-            selectedItemColor: MyTheme.accent, //
+            selectedItemColor: _ddUi ? const Color(0xFF1463F3) : MyTheme.accent, //
             unselectedItemColor: MyTheme.darkGray,
             onTap: (index) => setState(() {
               // close chat overlay when go chat page

@@ -223,19 +223,25 @@ void runMobileApp() async {
   await Future.wait([gFFI.abModel.loadCache(), gFFI.groupModel.loadCache()]);
   gFFI.userModel.refreshCurrentUser();
 
-  // Ensure service is always running (Android only)
+  runApp(App());
+
+  // Ensure service is always running (Android only).
+  // Не ждём до runApp: внутри запросы разрешений (по 120 с таймаута каждый)
+  // и сетевой ensureServerConfig — при отказанных разрешениях заставка
+  // висела несколько минут.
   if (isAndroid) {
     try {
       final autoStart = bind.mainGetLocalOption(key: kOptionAutoStartService);
       if (autoStart != 'N') {
-        await gFFI.serverModel.ensureServiceAlwaysRunning();
+        gFFI.serverModel.ensureServiceAlwaysRunning().catchError((e) {
+          debugPrint("Error ensuring service is always running: $e");
+        });
       }
     } catch (e) {
       debugPrint("Error ensuring service is always running: $e");
     }
   }
 
-  runApp(App());
   await initUniLinks();
 }
 

@@ -986,6 +986,9 @@ class ServerModel with ChangeNotifier {
   /// Ensure service is started on app open if not running.
   Future<void> ensureServiceStartedOnLaunch() async {
     if (_isStart) return;
+    // Сначала сервис, потом разрешения: отказанное разрешение не должно
+    // на минуты задерживать подключаемость телефона.
+    await startService();
     if (isAndroid) {
       await checkRequestNotificationPermission();
       if (bind.mainGetLocalOption(key: kOptionDisableFloatingWindow) != 'Y') {
@@ -995,7 +998,6 @@ class ServerModel with ChangeNotifier {
         await AndroidPermissionManager.request(kManageExternalStorage);
       }
     }
-    await startService();
   }
 
   /// Ensure service is always running — starts service and sets up monitoring.

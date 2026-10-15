@@ -55,6 +55,7 @@ class DdHealth extends ChangeNotifier {
   bool ignoringBattery = true;
   bool overlays = true;
   bool accessibility = true;
+  bool projectMedia = false;
   String network = 'other';
   String manufacturer = '';
   String model = '';
@@ -76,6 +77,7 @@ class DdHealth extends ChangeNotifier {
       ignoringBattery = r['ignoringBatteryOptimizations'] != false;
       overlays = r['canDrawOverlays'] != false;
       accessibility = r['accessibility'] != false;
+      projectMedia = r['projectMedia'] == true;
       network = (r['network'] as String?) ?? 'other';
       manufacturer = (r['manufacturer'] as String?) ?? '';
       model = (r['model'] as String?) ?? '';
@@ -97,7 +99,38 @@ List<Client> ddActiveClients(ServerModel m) => m.clients
 
 enum DdKind { stopped, permission, noInternet, offline, session, warning, ready }
 
-bool _remoteOk(ServerModel m, DdHealth h) => m.mediaOk && h.accessibility;
+/// MediaProjection активна только пока подключён арендатор, поэтому её
+/// отсутствие вне сессии — не ошибка. Ошибкой считаем только выключенный
+/// Accessibility (без него нет управления и XML-режима).
+bool _remoteOk(ServerModel m, DdHealth h) => h.accessibility;
+
+/// Захват экрана годен, если он уже идёт, выбран XML/скриншоты (MP не нужна)
+/// или выдан appop PROJECT_MEDIA (стартует без диалога при подключении).
+bool _captureOk(ServerModel m, DdHealth h) =>
+    m.mediaOk || m.captureMethod != 'mp' || h.projectMedia;
+
+/// (текст, цвет) состояния захвата экрана.
+(String, Color) _captureState(ServerModel m, DdHealth h) {
+  if (m.mediaOk) return ('Active', _green);
+  if (m.captureMethod == 'xml') return ('XML mode', _green);
+  if (m.captureMethod == 'shot') return ('Screenshots', _green);
+  if (h.projectMedia) return ('Starts on connect', _green);
+  return ('Asks on connect', _amber);
+}
+
+const _kCaptureChannel = MethodChannel('com.carriez.flutter_hbb/capture');
+
+/// Переключить режим картинки. Во время работы сервиса — на лету
+/// (switchMethod), иначе только запоминаем выбор на стороне Android.
+Future<void> ddSetCaptureMode(ServerModel m, String mode) async {
+  if (m.captureMethod == mode) return;
+  if (m.isStart) {
+    await m.switchCaptureMethod(mode);
+  } else {
+    await _kCaptureChannel.invokeMethod(captureChannelMethod(mode));
+    m.onNativeCaptureMethod(mode);
+  }
+}
 
 DdKind ddKind(ServerModel m, DdHealth h) {
   if (!m.isStart) return DdKind.stopped;
@@ -110,7 +143,7 @@ DdKind ddKind(ServerModel m, DdHealth h) {
 }
 
 String _modeName(String m) =>
-    {'mp': 'Standard', 'xml': 'Schematic', 'shot': 'Screenshots'}[m] ?? 'Standard';
+    {'mp': 'Media Projection', 'xml': 'XML', 'shot': 'Screenshots'}[m] ?? 'Media Projection';
 
 String _dur(Duration d) {
   if (d.inHours > 0) return '${d.inHours} h ${d.inMinutes % 60} min';
@@ -307,6 +340,7 @@ class _DdDevicePageState extends State<DdDevicePage> {
           ]), style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, letterSpacing: -0.5)),
         ),
         _deviceCard(m, h),
+        _modeCard(m),
       ];
       if (kind == DdKind.session) {
         children.addAll(_sessionCards(m));
@@ -398,6 +432,62 @@ class _DdDevicePageState extends State<DdDevicePage> {
     );
   }
 
+  Widget _modeCard(ServerModel m) {
+    Widget btn(String mode, String label, String hint, IconData ic) {
+      final on = m.captureMethod == mode;
+      return SizedBox(
+        height: 68,
+        child: ElevatedButton(
+          style: ElevatedButton.styleFrom(
+              backgroundColor: on ? _blue : _surface2,
+              foregroundColor: on ? Colors.white : _ink,
+              elevation: 0,
+              side: BorderSide(color: on ? _blue : _border),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14))),
+          onPressed: () => ddSetCaptureMode(m, mode),
+          child: Row(children: [
+            Icon(ic, size: 26),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 2),
+                  Text(hint,
+                      style: TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w400,
+                          color: on ? Colors.white70 : _muted)),
+                ],
+              ),
+            ),
+            if (on) const Icon(Icons.check_circle_rounded, size: 22),
+          ]),
+        ),
+      );
+    }
+
+    return _card(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('Picture mode',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _ink)),
+        const SizedBox(height: 12),
+        btn('mp', 'Media Projection mode', 'Real screen video', Icons.videocam_outlined),
+        const SizedBox(height: 10),
+        btn('xml', 'XML mode', 'Drawn from the screen layout, sees protected apps',
+            Icons.account_tree_outlined),
+        if (m.captureMethod != 'mp') ...[
+          const SizedBox(height: 10),
+          const Text('Lasts one session, then switches back to Media Projection.',
+              style: TextStyle(fontSize: 13, height: 1.4, color: _muted)),
+        ],
+      ]),
+    );
+  }
+
   Widget _statusCard(BuildContext context, DdKind kind) {
     late Color bg, border, icon, btn;
     late IconData glyph;
@@ -423,7 +513,7 @@ class _DdDevicePageState extends State<DdDevicePage> {
         btn = _orangeBtn;
         glyph = Icons.priority_high_rounded;
         title = 'Permission needed';
-        body = 'DroidDesk can’t see or control the screen yet.';
+        body = 'Remote control is off, so renters can’t tap or type on this phone.';
         action = 'Fix';
         onAction = () => _goTab(1);
         break;
@@ -556,6 +646,8 @@ class _DdDevicePageState extends State<DdDevicePage> {
     final access = _remoteOk(m, h)
         ? _value('Ready', _green)
         : _value('Needs permission', _amber);
+    final (capText, capColor) = _captureState(m, h);
+    final capture = _value(capText, capColor);
     final power = h.charging
         ? _value('Charging', _green)
         : _value(h.battery >= 0 ? 'On battery, ${h.battery}%' : 'On battery', _amber);
@@ -572,7 +664,8 @@ class _DdDevicePageState extends State<DdDevicePage> {
       padding: const EdgeInsets.fromLTRB(18, 6, 18, 18),
       child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
         _row('Connected to DroidDesk', conn),
-        _row('Remote access', access, onTap: () => _goTab(1)),
+        _row('Remote control', access, onTap: () => _goTab(1)),
+        _row('Screen capture', capture),
         _row('Power', power),
         _row('Internet', net),
         _row('Background work', bgw, onTap: () => _goTab(1), last: true),
@@ -713,9 +806,11 @@ class DdPermissionsPage extends StatelessWidget implements PageShape {
   Widget build(BuildContext context) {
     return _Watch(builder: (context, m, h) {
       Widget item(IconData ic, String title, String desc, bool ok,
-          {bool managed = false}) {
+          {bool managed = false, Widget? status}) {
         Widget right;
-        if (managed) {
+        if (status != null) {
+          right = status;
+        } else if (managed) {
           right = Text(ok ? 'On' : 'Off',
               style: TextStyle(
                   fontSize: 14, fontWeight: FontWeight.w600, color: ok ? _green : _muted));
@@ -787,7 +882,13 @@ class DdPermissionsPage extends StatelessWidget implements PageShape {
               style: TextStyle(fontSize: 14, height: 1.4, color: _muted)),
         ),
         item(Icons.desktop_windows_outlined, 'Screen capture',
-            'Lets renters see this phone’s screen remotely.', m.mediaOk),
+            'Lets renters see this phone’s screen. Turns on only while a renter is connected.',
+            _captureOk(m, h),
+            status: Builder(builder: (_) {
+              final (t, c) = _captureState(m, h);
+              return Text(t,
+                  style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: c));
+            })),
         item(Icons.touch_app_outlined, 'Remote control',
             'Lets renters tap, type and swipe on this phone.', h.accessibility),
         item(Icons.layers_outlined, 'Display over other apps',
@@ -1120,7 +1221,6 @@ class DdServicePage extends StatefulWidget {
 }
 
 class _DdServicePageState extends State<DdServicePage> {
-  static const _captureChannel = MethodChannel('com.carriez.flutter_hbb/capture');
   Timer? _idle;
 
   @override
@@ -1164,16 +1264,6 @@ class _DdServicePageState extends State<DdServicePage> {
       ),
     );
     return r == true;
-  }
-
-  Future<void> _setMode(ServerModel m, String mode) async {
-    if (m.captureMethod == mode) return;
-    if (m.isStart) {
-      await m.switchCaptureMethod(mode);
-    } else {
-      await _captureChannel.invokeMethod(captureChannelMethod(mode));
-      m.onNativeCaptureMethod(mode);
-    }
   }
 
   @override
@@ -1270,7 +1360,7 @@ class _DdServicePageState extends State<DdServicePage> {
                 const Text('System permissions',
                     style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: _ink)),
                 const SizedBox(height: 4),
-                grantRow('Screen capture', m.mediaOk, () {
+                grantRow('Screen capture', _captureOk(m, h), () {
                   if (!m.isStart) {
                     m.toggleService();
                   } else {
@@ -1300,15 +1390,15 @@ class _DdServicePageState extends State<DdServicePage> {
                         TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
                   ),
                   segments: const [
-                    ButtonSegment(value: 'mp', label: Text('Standard')),
-                    ButtonSegment(value: 'xml', label: Text('Schematic')),
+                    ButtonSegment(value: 'mp', label: Text('MP')),
+                    ButtonSegment(value: 'xml', label: Text('XML')),
                     ButtonSegment(value: 'shot', label: Text('Screenshots')),
                   ],
                   selected: {m.captureMethod},
-                  onSelectionChanged: (s) => _setMode(m, s.first),
+                  onSelectionChanged: (s) => ddSetCaptureMode(m, s.first),
                 ),
                 const SizedBox(height: 10),
-                const Text('Schematic and Screenshots last one session, then switch back to Standard.',
+                const Text('XML and Screenshots last one session, then switch back to Media Projection.',
                     style: TextStyle(fontSize: 13, height: 1.45, color: _muted)),
               ]),
             ),

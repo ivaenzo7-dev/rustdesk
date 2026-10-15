@@ -453,6 +453,21 @@ class MainActivity : FlutterActivity() {
         m["canDrawOverlays"] =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) Settings.canDrawOverlays(this) else true
         m["accessibility"] = isAccessibilityEnabled()
+        // MediaProjection берётся только при подключении арендатора, поэтому
+        // «сейчас не активен» — норма. Важно, выдан ли appop PROJECT_MEDIA
+        // (провижининг парка): тогда захват стартует без системного диалога.
+        m["projectMedia"] = try {
+            val ops = getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+            val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q)
+                ops.unsafeCheckOpNoThrow("android:project_media", android.os.Process.myUid(), packageName)
+            else
+                @Suppress("DEPRECATION")
+                ops.checkOpNoThrow("android:project_media", android.os.Process.myUid(), packageName)
+            mode == android.app.AppOpsManager.MODE_ALLOWED
+        } catch (e: Exception) {
+            Log.w(logTag, "ddHealth project_media: ${e.message}")
+            false
+        }
         var net = "none"
         try {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager

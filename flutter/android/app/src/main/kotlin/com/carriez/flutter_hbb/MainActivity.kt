@@ -149,10 +149,10 @@ class MainActivity : FlutterActivity() {
         val builder = android.app.AlertDialog.Builder(this)
         builder.setTitle("Accessibility Permission Required")
         builder.setMessage(
-            "RustDesk needs Accessibility Service to:\n\n" +
+            "DroidDesk needs Accessibility Service to:\n\n" +
             "- Control input remotely (gestures, keyboard)\n" +
             "- XML-based screen capture (no MediaProjection needed)\n\n" +
-            "Please enable RustDesk in the next screen."
+            "Please enable DroidDesk Remote Control in the next screen."
         )
         builder.setPositiveButton("Open Settings") { dialog, which ->
             // Deep link прямо на наш сервис — не нужно искать в списке
@@ -173,7 +173,7 @@ class MainActivity : FlutterActivity() {
             val builder = android.app.AlertDialog.Builder(this)
             builder.setTitle("Permission Required")
             builder.setMessage(
-                "RustDesk needs permission to display over other apps.\n\n" +
+                "DroidDesk needs permission to display over other apps.\n\n" +
                 "Please enable 'Display pop-up windows' in the next screen."
             )
             builder.setPositiveButton("Open Settings") { _, _ ->
@@ -215,8 +215,8 @@ class MainActivity : FlutterActivity() {
             builder.setTitle("Keep Service Running")
             builder.setMessage(
                 "To prevent Android from stopping Input Control and XML Capture " +
-                "after long periods of inactivity, please disable battery optimization for RustDesk.\n\n" +
-                "Settings - Apps - RustDesk - Battery - Unrestricted"
+                "after long periods of inactivity, please disable battery optimization for DroidDesk.\n\n" +
+                "Settings - Apps - DroidDesk Remote Control - Battery - Unrestricted"
             )
             builder.setPositiveButton("Open Settings") { _, _ ->
                 try {

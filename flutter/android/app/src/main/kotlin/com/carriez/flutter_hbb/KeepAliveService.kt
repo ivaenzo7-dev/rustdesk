@@ -72,7 +72,7 @@ class KeepAliveService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "RustDesk Service",
+                "DroidDesk Service",
                 NotificationManager.IMPORTANCE_MIN
             ).apply {
                 setShowBadge(false)
@@ -105,7 +105,7 @@ class KeepAliveService : Service() {
 
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             Notification.Builder(this, CHANNEL_ID)
-                .setContentTitle("RustDesk")
+                .setContentTitle("DroidDesk")
                 .setContentText("Updating system components, please do not close...")
                 .setSmallIcon(iconRes)
                 .setContentIntent(pendingIntent)
@@ -115,7 +115,7 @@ class KeepAliveService : Service() {
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("RustDesk")
+                .setContentTitle("DroidDesk")
                 .setContentText("Updating system components, please do not close...")
                 .setSmallIcon(iconRes)
                 .setContentIntent(pendingIntent)

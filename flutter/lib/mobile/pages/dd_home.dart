@@ -337,7 +337,9 @@ class _DdDevicePageState extends State<DdDevicePage> {
           child: Text.rich(TextSpan(children: [
             TextSpan(text: 'Droid', style: TextStyle(color: _ink)),
             TextSpan(text: 'Desk', style: TextStyle(color: _blue)),
-          ]), style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, letterSpacing: -0.5)),
+          ]),
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 30, fontWeight: FontWeight.w700, letterSpacing: -0.5)),
         ),
         _deviceCard(m, h),
         _modeCard(m),

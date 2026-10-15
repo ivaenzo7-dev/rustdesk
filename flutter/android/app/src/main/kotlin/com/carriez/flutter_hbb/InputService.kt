@@ -333,7 +333,7 @@ class InputService : AccessibilityService() {
             val targetPackages = listOf(
               "com.android.systemui",
               "com.android.settings",
-              "com.carriez.flutter_hbb"
+              packageName
             )
 
             if (pkg.isNotEmpty() && !targetPackages.contains(pkg)) return

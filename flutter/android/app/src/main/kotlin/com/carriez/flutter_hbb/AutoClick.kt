@@ -55,6 +55,7 @@ object AutoClick {
         "запись или трансляцию с",                  // RU
         "will have access to all of the information", // EN Android 11 (из тела диалога)
         "RustDesk will have access",                // EN Android 11 короткий
+        "DroidDesk Remote Control will have access",
     )
 
     // -----------------------------------------------------------------------
